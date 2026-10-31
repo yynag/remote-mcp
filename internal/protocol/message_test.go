@@ -5,13 +5,13 @@ import "testing"
 // TestTransferDefaults 固定检查协议的分块和并发参数。
 func TestTransferDefaults(t *testing.T) {
 	if DefaultChunkSize != 5*1024*1024 {
-		t.Fatalf("chunk size = %d, want 5 MiB", DefaultChunkSize)
+		t.Fatalf("分块大小 = %d，期望 5 MiB", DefaultChunkSize)
 	}
 	if DefaultConcurrency != 4 {
-		t.Fatalf("concurrency = %d, want 4", DefaultConcurrency)
+		t.Fatalf("并行数 = %d，期望 4", DefaultConcurrency)
 	}
 	if MaxDataFrame != 256*1024 {
-		t.Fatalf("max data frame = %d, want 256 KiB", MaxDataFrame)
+		t.Fatalf("最大数据帧 = %d，期望 256 KiB", MaxDataFrame)
 	}
 }
 
@@ -23,6 +23,6 @@ func TestRequestValidation(t *testing.T) {
 	}
 	m.ClientID = ""
 	if m.ValidateRequest() == nil {
-		t.Fatal("expected invalid request")
+		t.Fatal("期望请求校验失败")
 	}
 }

@@ -26,7 +26,7 @@ type Registry struct {
 	clients    map[*protocol.Peer]string
 	dataMu     sync.Mutex
 	dataWait   map[string]pendingData
-	dataActive map[*websocket.Conn]struct{}
+	dataActive map[*websocket.Conn]protocol.DataHandshake
 	dataClosed bool
 }
 
@@ -38,7 +38,7 @@ type pendingData struct {
 
 // NewRegistry 创建中继注册表。
 func NewRegistry() *Registry {
-	return &Registry{instances: make(map[string]*instance), clients: make(map[*protocol.Peer]string), dataWait: make(map[string]pendingData), dataActive: make(map[*websocket.Conn]struct{})}
+	return &Registry{instances: make(map[string]*instance), clients: make(map[*protocol.Peer]string), dataWait: make(map[string]pendingData), dataActive: make(map[*websocket.Conn]protocol.DataHandshake)}
 }
 
 // Handler 创建中继的 WebSocket 路由。
@@ -49,7 +49,7 @@ func (r *Registry) Handler() http.Handler {
 		if err != nil {
 			return
 		}
-		log.Printf("server connected remote=%s", req.RemoteAddr)
+		log.Printf("server连接 remote=%s", req.RemoteAddr)
 		r.serveServer(protocol.NewPeer(conn))
 	})
 	mux.HandleFunc("/client", func(w http.ResponseWriter, req *http.Request) {
@@ -57,7 +57,7 @@ func (r *Registry) Handler() http.Handler {
 		if err != nil {
 			return
 		}
-		log.Printf("client connected remote=%s", req.RemoteAddr)
+		log.Printf("client连接 remote=%s", req.RemoteAddr)
 		r.serveClient(protocol.NewPeer(conn))
 	})
 	mux.HandleFunc("/data", r.data)
@@ -86,20 +86,23 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		r.dataMu.Lock()
 		pending, ok := r.dataWait[h.PairID]
 		if r.dataClosed || !ok || !sameDataIdentity(pending.h, h) {
+			log.Printf("数据连接配对失败 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
 			r.dataMu.Unlock()
 			_ = conn.Close()
 			return
 		}
 		delete(r.dataWait, h.PairID)
 		pending.timer.Stop()
-		r.dataActive[pending.conn] = struct{}{}
-		r.dataActive[conn] = struct{}{}
+		r.dataActive[pending.conn] = pending.h
+		r.dataActive[conn] = h
 		r.dataMu.Unlock()
+		log.Printf("数据连接配对成功 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
 		relayData(pending.conn, conn)
 		r.dataMu.Lock()
 		delete(r.dataActive, pending.conn)
 		delete(r.dataActive, conn)
 		r.dataMu.Unlock()
+		log.Printf("数据中继结束 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
 		return
 	}
 	if h.Role != "client" || h.PairID == "" {
@@ -127,10 +130,12 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		if pending, ok := r.dataWait[h.PairID]; ok && pending.conn == conn {
 			delete(r.dataWait, h.PairID)
 			_ = conn.Close()
+			log.Printf("数据连接配对超时 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
 		}
 	})
 	r.dataWait[h.PairID] = pendingData{conn: conn, h: h, timer: timer}
 	r.dataMu.Unlock()
+	log.Printf("数据连接等待配对 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
 	b, _ := json.Marshal(h)
 	open := protocol.Message{Version: protocol.Version, Type: "data.open", ClientID: h.ClientID, InstanceID: h.InstanceID, Params: b}
 	if err = s.Peer.Write(open); err != nil {
@@ -158,14 +163,6 @@ func relayData(client, server *websocket.Conn) {
 			}
 			if typ != websocket.BinaryMessage && typ != websocket.TextMessage {
 				return
-			}
-			if typ == websocket.TextMessage {
-				var control struct {
-					Type string `json:"type"`
-				}
-				if json.Unmarshal(b, &control) != nil || (control.Type != "data.ready" && control.Type != "data.ack" && control.Type != "data.done" && control.Type != "data.error") {
-					return
-				}
 			}
 			_ = dst.SetWriteDeadline(time.Now().Add(30 * time.Second))
 			if err = dst.WriteMessage(typ, b); err != nil {
@@ -257,7 +254,7 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 	defer p.Close()
 	var hello protocol.Hello
 	if err := p.Read(&hello); err != nil || hello.Type != "hello" || hello.InstanceID == "" {
-		log.Printf("invalid server hello: %v", err)
+		log.Printf("无效的 server hello: %v", err)
 		return
 	}
 	r.Lock()
@@ -265,7 +262,11 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 	r.instances[hello.InstanceID] = &instance{Hello: hello, Peer: p}
 	r.Unlock()
 	if old != nil {
+		log.Printf("server实例替换 instance_id=%s", hello.InstanceID)
+		r.closeDataForInstance(hello.InstanceID)
 		old.Peer.Close()
+	} else {
+		log.Printf("server实例注册 instance_id=%s", hello.InstanceID)
 	}
 	_ = p.Write(protocol.Message{Version: 1, Type: "welcome", InstanceID: hello.InstanceID})
 	r.broadcast(hello, "")
@@ -279,6 +280,8 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 		}
 		r.Unlock()
 		if removed {
+			r.closeDataForInstance(hello.InstanceID)
+			log.Printf("server实例下线 instance_id=%s", hello.InstanceID)
 			r.broadcast(protocol.Message{Type: "instance.offline", InstanceID: hello.InstanceID}, "")
 		}
 	}()
@@ -299,17 +302,23 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 }
 
 func (r *Registry) serveClient(p *protocol.Peer) {
+	clientID := ""
+	defer func() {
+		log.Printf("client断开 client_id=%s", clientID)
+		r.Lock()
+		delete(r.clients, p)
+		r.Unlock()
+		p.Close()
+	}()
 	r.Lock()
 	r.clients[p] = ""
 	// 将初始实例快照与注册、离线变更串行化。
 	err := p.Write(protocol.Message{Version: 1, Type: "instances", Data: r.snapshotLocked()})
 	r.Unlock()
-	defer func() { r.Lock(); delete(r.clients, p); r.Unlock(); p.Close() }()
 	if err != nil {
 		return
 	}
 	go p.Heartbeat()
-	clientID := ""
 	for {
 		var m protocol.Message
 		if err := p.Read(&m); err != nil {
@@ -330,11 +339,34 @@ func (r *Registry) serveClient(p *protocol.Peer) {
 				r.Unlock()
 			}
 			if m.ClientID != clientID {
-				_ = p.Write(protocol.Failure(m, "INVALID_REQUEST", errors.New("client_id must be stable for one connection")))
+				_ = p.Write(protocol.Failure(m, "INVALID_REQUEST", errors.New("client_id 在同一连接上必须保持不变")))
 				continue
 			}
 			r.routeRequest(p, m)
 		}
+	}
+}
+
+// closeDataForInstance 关闭实例相关的待配对和活动数据连接，避免控制连接断开后状态残留。
+func (r *Registry) closeDataForInstance(instanceID string) {
+	r.dataMu.Lock()
+	defer r.dataMu.Unlock()
+	for pairID, pending := range r.dataWait {
+		if pending.h.InstanceID != instanceID {
+			continue
+		}
+		pending.timer.Stop()
+		_ = pending.conn.Close()
+		delete(r.dataWait, pairID)
+		log.Printf("清理等待数据连接 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", pending.h.InstanceID, pending.h.ClientID, pending.h.TransferID, pending.h.PairID, pending.h.ChunkIndex)
+	}
+	for conn, h := range r.dataActive {
+		if h.InstanceID != instanceID {
+			continue
+		}
+		_ = conn.Close()
+		delete(r.dataActive, conn)
+		log.Printf("清理活动数据连接 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
 	}
 }
 
@@ -350,7 +382,7 @@ func (r *Registry) routeRequest(p *protocol.Peer, m protocol.Message) {
 	s := r.instances[m.InstanceID]
 	r.RUnlock()
 	if s == nil {
-		_ = p.Write(protocol.Failure(m, "INSTANCE_OFFLINE", errors.New("instance is offline")))
+		_ = p.Write(protocol.Failure(m, "INSTANCE_OFFLINE", errors.New("实例不在线")))
 		return
 	}
 	if err := s.Peer.Write(m); err != nil {

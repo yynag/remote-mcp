@@ -182,6 +182,9 @@ func runRealTransfer(t *testing.T, reverse bool) {
 		if list, ok := instances.([]any); ok {
 			for _, item := range list {
 				if value, ok := item.(map[string]any); ok && value["instance_id"] == instanceID && value["online"] == true {
+					if _, containsGuide := value["guide"]; containsGuide {
+						t.Fatal("instance_list 不应包含指南正文")
+					}
 					goto instanceReady
 				}
 			}
@@ -257,11 +260,11 @@ func (m *mcpStream) call(method string, params any) (map[string]any, error) {
 			continue
 		}
 		if response["error"] != nil {
-			return nil, fmt.Errorf("MCP %s error: %v", method, response["error"])
+			return nil, fmt.Errorf("MCP %s 返回错误：%v", method, response["error"])
 		}
 		result, ok := response["result"].(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("MCP %s response has no result", method)
+			return nil, fmt.Errorf("MCP %s 响应缺少 result 字段", method)
 		}
 		return result, nil
 	}
@@ -347,10 +350,7 @@ func writeFixture(t *testing.T, path string, size int64) {
 	defer file.Close()
 	block := bytes.Repeat([]byte("remote-mcp-fixture-"), 8192)
 	for written := int64(0); written < size; {
-		count := int64(len(block))
-		if count > size-written {
-			count = size - written
-		}
+		count := min(int64(len(block)), size-written)
 		if _, err = file.Write(block[:count]); err != nil {
 			t.Fatal(err)
 		}

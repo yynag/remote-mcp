@@ -15,7 +15,7 @@ func main() {
 	listen := flag.String("listen", ":9098", "监听地址")
 	flag.Parse()
 	if flag.NArg() != 0 {
-		log.Fatal("unexpected positional arguments")
+		log.Fatal("不接受位置参数")
 	}
 	registry := NewRegistry()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -28,7 +28,7 @@ func main() {
 		defer done()
 		_ = srv.Shutdown(shutdown)
 	}()
-	log.Printf("transport listening=%s", *listen)
+	log.Printf("transport 开始监听 addr=%s", *listen)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

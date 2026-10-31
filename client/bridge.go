@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"remote-mcp/internal/protocol"
+	"remote-mcp/internal/wsdial"
 )
 
 type wireMessage struct {
@@ -126,7 +127,7 @@ func (b *Bridge) Start(ctx context.Context) error {
 }
 
 func (c *connection) connect(ctx context.Context) error {
-	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
+	dialer := wsdial.Control()
 	conn, response, err := dialer.DialContext(ctx, c.url, nil)
 	if err != nil {
 		if response != nil {
@@ -134,6 +135,7 @@ func (c *connection) connect(ctx context.Context) error {
 		}
 		return fmt.Errorf("连接 %s：%w", c.url, err)
 	}
+	wsdial.LogConnection("client.control", conn)
 	conn.SetReadLimit(8 * 1024 * 1024)
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var hello wireMessage
@@ -255,7 +257,7 @@ func (c *connection) close() {
 func (b *Bridge) receive(conn *connection, message wireMessage) {
 	switch message.Type {
 	case "hello":
-		b.introduce(conn, []protocol.Hello{{Type: "hello", InstanceID: message.Instance, Guide: message.Guide}})
+		b.introduce(conn, []protocol.Hello{{Type: "hello", InstanceID: message.Instance}})
 		return
 	case "instances":
 		b.introduce(conn, decodeInstances(message.Data))
@@ -523,6 +525,7 @@ func dataURL(endpoint string) (string, error) {
 		return "", err
 	}
 	parsed.Path = "/data"
+	parsed.RawPath = ""
 	parsed.RawQuery = ""
 	return parsed.String(), nil
 }

@@ -12,8 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestBridgeRemainsConnectedWithFrequentApplicationHeartbeats verifies a real
-// WebSocket connection remains live beyond the 45-second read deadline.
+// TestBridgeRemainsConnectedWithFrequentApplicationHeartbeats 验证真实 WebSocket
+// 连接在持续收到应用层心跳时，超过 45 秒读取期限后仍保持连接。
 func TestBridgeRemainsConnectedWithFrequentApplicationHeartbeats(t *testing.T) {
 	timeout := 65 * time.Second
 	testCtx, cancel := context.WithTimeout(context.Background(), timeout)

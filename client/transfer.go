@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"remote-mcp/internal/protocol"
+	"remote-mcp/internal/wsdial"
 )
 
 const (
@@ -292,7 +293,7 @@ func (b *Bridge) transferChunk(ctx context.Context, instanceID string, status tr
 	hash := status.ChunkSHA256[index]
 	pairID := newID()
 	handshake := protocol.DataHandshake{Type: "data", Role: "client", PairID: pairID, InstanceID: instanceID, ClientID: b.clientID, TransferID: status.TransferID, Direction: direction, ChunkIndex: index, Offset: offset, Length: length, SHA256: hash}
-	ws, _, err := websocket.DefaultDialer.DialContext(ctx, endpoint, nil)
+	ws, _, err := wsdial.Data().DialContext(ctx, endpoint, nil)
 	if err != nil {
 		return err
 	}
@@ -305,6 +306,7 @@ func (b *Bridge) transferChunk(ctx context.Context, instanceID string, status tr
 		session.mu.Unlock()
 		_ = ws.Close()
 	}()
+	wsdial.LogConnection("client.data", ws)
 	_ = ws.SetReadDeadline(time.Now().Add(30 * time.Second))
 	if err = ws.WriteJSON(handshake); err != nil {
 		return err
@@ -457,11 +459,11 @@ func decodeStatus(value any) (transferStatus, error) {
 func validateStatus(status transferStatus) error {
 	count := int((status.Size + defaultChunkSize - 1) / defaultChunkSize)
 	if status.State != "active" || status.Size < 0 || status.ChunkSize != defaultChunkSize || status.Concurrency != defaultConcurrency || len(status.ChunkSHA256) != count {
-		return errors.New("INVALID_TRANSFER_STATUS")
+		return errors.New("INVALID_TRANSFER_STATUS: 传输状态无效")
 	}
 	for _, index := range status.CompletedChunks {
 		if index < 0 || index >= count {
-			return errors.New("INVALID_TRANSFER_STATUS")
+			return errors.New("INVALID_TRANSFER_STATUS: 传输状态无效")
 		}
 	}
 	return nil
@@ -477,9 +479,7 @@ func runTransferWorkers(ctx context.Context, indices []int, workers int, fn func
 	results := make(chan error, workers)
 	var group sync.WaitGroup
 	for i := 0; i < minInt(len(indices), workers); i++ {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -497,7 +497,7 @@ func runTransferWorkers(ctx context.Context, indices []int, workers int, fn func
 					}
 				}
 			}
-		}()
+		})
 	}
 	go func() {
 		defer close(jobs)

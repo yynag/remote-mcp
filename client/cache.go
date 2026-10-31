@@ -39,13 +39,7 @@ func (s *streamCache) append(offset int64, data []byte) {
 
 func (s *streamCache) read(offset int64) (string, int64, int64, bool) {
 	end := s.base + int64(len(s.data))
-	start := offset
-	if start < s.base {
-		start = s.base
-	}
-	if start > end {
-		start = end
-	}
+	start := min(max(offset, s.base), end)
 	return string(s.data[start-s.base:]), start, end, offset < s.base
 }
 

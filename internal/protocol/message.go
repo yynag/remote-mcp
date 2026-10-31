@@ -19,11 +19,11 @@ const (
 	MaxDataFrame = 256 * 1024
 )
 
-// Hello 是 server 主动发送的实例介绍。
+// Hello 是 server 发送的实例标识。指南正文通过 instance.get 按需获取。
 type Hello struct {
 	Type       string `json:"type"`
 	InstanceID string `json:"instance_id"`
-	Guide      string `json:"guide"`
+	Guide      string `json:"guide,omitempty"`
 }
 
 // Message 是控制 WebSocket 上传输的 JSON 消息。
@@ -63,7 +63,7 @@ func Success(req Message, result any) Message {
 // ValidateRequest 检查请求是否包含协议要求的字段。
 func (m Message) ValidateRequest() error {
 	if m.Type != "request" || m.Version != Version || m.ClientID == "" || m.RequestID == "" || m.InstanceID == "" || m.Method == "" {
-		return fmt.Errorf("request requires version=1, client_id, request_id, instance_id and method")
+		return fmt.Errorf("请求需要 version=1、client_id、request_id、instance_id 和 method")
 	}
 	return nil
 }

@@ -5,11 +5,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
+
+	"remote-mcp/internal/endpoint"
 
 	"gopkg.in/yaml.v3"
 )
@@ -38,17 +37,19 @@ func LoadConfig(path string) (Config, string, error) {
 		return cfg, "", fmt.Errorf("配置文件只能包含一个 YAML 文档")
 	}
 	if cfg.InstanceID == "" || cfg.Guide == "" || cfg.Listen == "" {
-		return cfg, "", fmt.Errorf("config requires instance_id, guide and listen")
+		return cfg, "", fmt.Errorf("配置必须包含 instance_id、guide 和 listen")
 	}
-	_, listenPort, splitErr := net.SplitHostPort(cfg.Listen)
-	if splitErr != nil || !validPort(listenPort) {
-		return cfg, "", fmt.Errorf("invalid listen address: %s", cfg.Listen)
+	listen, err := endpoint.ParseListen(cfg.Listen)
+	if err != nil {
+		return cfg, "", fmt.Errorf("无效的 listen 地址 %q：%w", cfg.Listen, err)
 	}
+	cfg.Listen = listen
 	if cfg.Gateway != "" {
-		host, port, splitErr := net.SplitHostPort(cfg.Gateway)
-		if splitErr != nil || net.ParseIP(host) == nil || strings.Contains(cfg.Gateway, "/") || !validPort(port) {
-			return cfg, "", fmt.Errorf("gateway must be an IP:PORT address")
+		gateway, err := endpoint.ParseDial(cfg.Gateway)
+		if err != nil {
+			return cfg, "", fmt.Errorf("无效的 gateway HOST:PORT 地址 %q：%w", cfg.Gateway, err)
 		}
+		cfg.Gateway = gateway
 	}
 	guidePath := cfg.Guide
 	if !filepath.IsAbs(guidePath) {
@@ -68,12 +69,7 @@ func LoadConfig(path string) (Config, string, error) {
 		return cfg, "", err
 	}
 	if len(b) > 1024*1024 {
-		return cfg, "", fmt.Errorf("guide exceeds 1 MiB")
+		return cfg, "", fmt.Errorf("指南正文超过 1 MiB")
 	}
 	return cfg, string(b), nil
-}
-
-func validPort(value string) bool {
-	port, err := strconv.Atoi(value)
-	return err == nil && port > 0 && port <= 65535
 }

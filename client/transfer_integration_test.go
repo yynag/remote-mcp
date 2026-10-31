@@ -172,10 +172,7 @@ func writeTestFile(t *testing.T, path string, size int64) {
 	defer file.Close()
 	block := []byte(strings.Repeat("remote-mcp-resume-data", 4096))
 	for written := int64(0); written < size; {
-		count := int64(len(block))
-		if count > size-written {
-			count = size - written
-		}
+		count := min(int64(len(block)), size-written)
 		if _, err = file.Write(block[:count]); err != nil {
 			t.Fatal(err)
 		}

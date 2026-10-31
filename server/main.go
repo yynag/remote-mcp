@@ -20,7 +20,7 @@ func main() {
 	config := flag.String("config", "config.yaml", "服务端 YAML 配置文件路径")
 	flag.Parse()
 	if flag.NArg() != 0 {
-		log.Fatal("unexpected positional arguments")
+		log.Fatal("不接受位置参数")
 	}
 	cfg, guide, err := LoadConfig(*config)
 	if err != nil {

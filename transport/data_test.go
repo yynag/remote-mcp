@@ -29,7 +29,7 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 	t.Cleanup(func() { r.Close(); srv.Close() })
 	base := "ws" + strings.TrimPrefix(srv.URL, "http")
 	control := transportSocket(t, base+"/server")
-	if err := control.WriteJSON(protocol.Hello{Type: "hello", InstanceID: "server", Guide: "test"}); err != nil {
+	if err := control.WriteJSON(protocol.Hello{Type: "hello", InstanceID: "server"}); err != nil {
 		t.Fatal(err)
 	}
 	var welcome protocol.Message
@@ -37,12 +37,12 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if welcome.Type != "welcome" {
-		t.Fatalf("unexpected welcome: %+v", welcome)
+		t.Fatalf("意外的 welcome 消息: %+v", welcome)
 	}
 	h := protocol.DataHandshake{Type: "data", Role: "client", PairID: "pair", InstanceID: "server", ClientID: "client",
 		TransferID: "transfer", ChunkIndex: 7, Direction: "upload", Offset: 7 * protocol.DefaultChunkSize, Length: 4, SHA256: "hash"}
-	client := transportSocket(t, base+"/data")
-	if err := client.WriteJSON(h); err != nil {
+	dataClient := transportSocket(t, base+"/data")
+	if err := dataClient.WriteJSON(h); err != nil {
 		t.Fatal(err)
 	}
 	var opened protocol.Message
@@ -50,7 +50,7 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if opened.Type != "data.open" || opened.ClientID != h.ClientID || opened.InstanceID != h.InstanceID {
-		t.Fatalf("bad open: %+v", opened)
+		t.Fatalf("错误的 data.open 消息: %+v", opened)
 	}
 
 	bad := h
@@ -61,13 +61,13 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := wrong.ReadMessage(); err == nil {
-		t.Fatal("mismatched chunk identity was paired")
+		t.Fatal("身份不匹配的分块连接被配对了")
 	}
 	r.dataMu.Lock()
 	waiting := len(r.dataWait)
 	r.dataMu.Unlock()
 	if waiting != 1 {
-		t.Fatal("mismatched server stole the pending client")
+		t.Fatal("身份不匹配的 server 连接抢走了待配对的 client")
 	}
 
 	server := transportSocket(t, base+"/data")
@@ -81,14 +81,14 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 	var ready struct {
 		Type string `json:"type"`
 	}
-	if err := client.ReadJSON(&ready); err != nil {
+	if err := dataClient.ReadJSON(&ready); err != nil {
 		t.Fatal(err)
 	}
 	if ready.Type != "data.ready" {
-		t.Fatalf("a consumed hello was relayed: %+v", ready)
+		t.Fatalf("已消费的 hello 被转发了: %+v", ready)
 	}
 	payload := []byte("file")
-	if err := client.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+	if err := dataClient.WriteMessage(websocket.BinaryMessage, payload); err != nil {
 		t.Fatal(err)
 	}
 	kind, actual, err := server.ReadMessage()
@@ -96,14 +96,19 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if kind != websocket.BinaryMessage || string(actual) != string(payload) {
-		t.Fatalf("relay: kind=%d data=%q", kind, actual)
+		t.Fatalf("二进制中继: kind=%d data=%q", kind, actual)
 	}
-	// 后续 hello 不是合法的数据控制帧，不得继续转发。
-	if err := client.WriteJSON(h); err != nil {
+	// 任意合法文本控制帧都应透明转发，传输层不解析业务类型。
+	textControl := []byte(`{"type":"custom.control","value":"opaque"}`)
+	if err := dataClient.WriteMessage(websocket.TextMessage, textControl); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := server.ReadMessage(); err == nil {
-		t.Fatal("relay forwarded a second hello")
+	kind, actual, err = server.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != websocket.TextMessage || string(actual) != string(textControl) {
+		t.Fatalf("文本中继: kind=%d data=%q", kind, actual)
 	}
 }
 
@@ -114,7 +119,7 @@ func TestDataShutdownClosesPendingPair(t *testing.T) {
 	t.Cleanup(func() { r.Close(); srv.Close() })
 	base := "ws" + strings.TrimPrefix(srv.URL, "http")
 	control := transportSocket(t, base+"/server")
-	if err := control.WriteJSON(protocol.Hello{Type: "hello", InstanceID: "server", Guide: "test"}); err != nil {
+	if err := control.WriteJSON(protocol.Hello{Type: "hello", InstanceID: "server"}); err != nil {
 		t.Fatal(err)
 	}
 	var welcome protocol.Message
@@ -131,12 +136,12 @@ func TestDataShutdownClosesPendingPair(t *testing.T) {
 	}
 	r.Close()
 	if _, _, err := client.ReadMessage(); err == nil {
-		t.Fatal("pending data socket survived shutdown")
+		t.Fatal("待配对的数据连接在中继关闭后仍然存活")
 	}
 	r.dataMu.Lock()
 	waiting := len(r.dataWait)
 	r.dataMu.Unlock()
 	if waiting != 0 {
-		t.Fatalf("shutdown left %d pending pairs", waiting)
+		t.Fatalf("关闭后仍残留 %d 个待配对连接", waiting)
 	}
 }

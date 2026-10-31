@@ -5,17 +5,18 @@ import (
 	"log"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"remote-mcp/internal/protocol"
+	"remote-mcp/internal/wsdial"
 )
 
 // Reverse 持续连接中继，并在连接断开后自动重连。
 func Reverse(ctx context.Context, e *Engine, address string) {
 	for ctx.Err() == nil {
 		log.Printf("[连接中继] 实例=%s，地址=%s", e.id, address)
-		dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
+		dialer := wsdial.Control()
 		conn, _, err := dialer.DialContext(ctx, "ws://"+address+"/server", nil)
 		if err == nil {
+			wsdial.LogConnection("server.control", conn)
 			log.Printf("[中继连接成功] 实例=%s，地址=%s", e.id, address)
 			p := protocol.NewPeer(conn)
 			done := make(chan struct{})

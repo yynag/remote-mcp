@@ -82,7 +82,7 @@ func dataReply(t *testing.T, c *websocket.Conn, kind string) {
 		t.Fatal(err)
 	}
 	if result.Type != kind {
-		t.Fatalf("expected %s, got %+v", kind, result)
+		t.Fatalf("期望 %s，实际 %+v", kind, result)
 	}
 }
 
@@ -107,10 +107,10 @@ func TestTransferChecksumRetryAndAtomicCommit(t *testing.T) {
 	}
 	dataReply(t, c, "data.error")
 	if len(transferCall(t, e, "transfer.status", protocol.TransferSpec{TransferID: id})["completed_chunks"].([]int)) != 0 {
-		t.Fatal("bad chunk marked complete")
+		t.Fatal("错误的分块被标记为已完成")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("uncommitted destination exists: %v", err)
+		t.Fatalf("未提交的目标文件已存在：%v", err)
 	}
 	c = dataSocket(t, url, h)
 	dataReply(t, c, "data.ready")
@@ -119,15 +119,15 @@ func TestTransferChecksumRetryAndAtomicCommit(t *testing.T) {
 	}
 	dataReply(t, c, "data.done")
 	if transferCall(t, e, "transfer.commit", protocol.TransferSpec{TransferID: id})["state"] != "completed" {
-		t.Fatal("not committed")
+		t.Fatal("未提交")
 	}
 	actual, err := os.ReadFile(path)
 	if err != nil || string(actual) != string(payload) {
-		t.Fatalf("payload: %q, %v", actual, err)
+		t.Fatalf("载荷：%q，%v", actual, err)
 	}
 	transferCall(t, e, "transfer.commit", protocol.TransferSpec{TransferID: id})
 	if transferCall(t, e, "transfer.cancel", protocol.TransferSpec{TransferID: id})["state"] != "completed" {
-		t.Fatal("cancel downgraded committed state")
+		t.Fatal("取消操作把已提交状态降级了")
 	}
 }
 
@@ -148,7 +148,7 @@ func TestTransferFourSocketLimitAndCancelCleanup(t *testing.T) {
 	tr.mu.Lock()
 	temp := tr.tmp
 	tr.mu.Unlock()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		c := dataSocket(t, url, protocol.DataHandshake{Type: "data", InstanceID: "instance", ClientID: "client", TransferID: id,
 			Direction: "upload", ChunkIndex: i, Offset: int64(i) * protocol.DefaultChunkSize, Length: protocol.DefaultChunkSize, SHA256: sha})
 		if i < 4 {
@@ -161,22 +161,22 @@ func TestTransferFourSocketLimitAndCancelCleanup(t *testing.T) {
 	active := len(tr.active)
 	tr.mu.Unlock()
 	if active != 4 {
-		t.Fatalf("active sockets = %d", active)
+		t.Fatalf("活动连接数 = %d", active)
 	}
 	if transferCall(t, e, "transfer.cancel", protocol.TransferSpec{TransferID: id})["state"] != "cancelled" {
-		t.Fatal("not cancelled")
+		t.Fatal("未取消")
 	}
 	if _, err := os.Stat(temp); !os.IsNotExist(err) {
-		t.Fatalf("partial not removed: %v", err)
+		t.Fatalf("临时分块文件未删除：%v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("destination created: %v", err)
+		t.Fatalf("目标文件已被创建：%v", err)
 	}
 	tr.mu.Lock()
 	open := tr.file != nil
 	tr.mu.Unlock()
 	if open {
-		t.Fatal("cancel left file open")
+		t.Fatal("取消后文件仍未关闭")
 	}
 }
 
@@ -198,12 +198,12 @@ func TestTransferRetentionAndResumeManifest(t *testing.T) {
 	temp := tr.tmp
 	tr.mu.Unlock()
 	if retention < 29*time.Minute || retention > 30*time.Minute {
-		t.Fatalf("retention = %v", retention)
+		t.Fatalf("保留时长 = %v", retention)
 	}
 	bad := spec
 	bad.ChunkSHA256 = []string{strings.Repeat("0", 64)}
 	if _, err := e.transfers.prepare(bad, "new-client"); err == nil {
-		t.Fatal("changed chunk manifest accepted")
+		t.Fatal("被修改的分块清单竟然被接受")
 	}
 	if _, err := e.transfers.prepare(spec, "new-client"); err != nil {
 		t.Fatal(err)
@@ -215,9 +215,9 @@ func TestTransferRetentionAndResumeManifest(t *testing.T) {
 	tr.expires = time.Now().Add(-time.Second)
 	tr.mu.Unlock()
 	if _, err := e.transfers.get(spec.TransferID, "new-client"); err == nil {
-		t.Fatal("expired transfer accepted")
+		t.Fatal("已过期的传输竟然被接受")
 	}
 	if _, err := os.Stat(temp); !os.IsNotExist(err) {
-		t.Fatalf("expired partial left behind: %v", err)
+		t.Fatalf("过期后临时分块文件仍残留：%v", err)
 	}
 }

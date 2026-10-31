@@ -98,7 +98,7 @@ func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 		e.mu.Unlock()
 		log.Printf("[客户端断开] 实例=%s，连接=%s，模式=%s，远端=%s", e.id, connectionID, mode, remote)
 	}()
-	if err := p.Write(protocol.Hello{Type: "hello", InstanceID: e.id, Guide: e.guide}); err != nil {
+	if err := p.Write(protocol.Hello{Type: "hello", InstanceID: e.id}); err != nil {
 		log.Printf("[实例介绍发送失败] 实例=%s，连接=%s，远端=%s，原因=%v", e.id, connectionID, remote, err)
 		return
 	}
@@ -142,7 +142,7 @@ func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 			continue
 		}
 		if req.InstanceID != e.id {
-			_ = p.Write(protocol.Failure(req, "INSTANCE_OFFLINE", errors.New("unknown instance")))
+			_ = p.Write(protocol.Failure(req, "INSTANCE_OFFLINE", errors.New("未知实例")))
 			continue
 		}
 		log.Printf("[请求已接收] 实例=%s，连接=%s，client=%s，请求=%s，方法=%s", e.id, connectionID, req.ClientID, req.RequestID, req.Method)
@@ -174,7 +174,7 @@ func (e *Engine) Handle(req protocol.Message) protocol.Message {
 func (e *Engine) dispatch(req protocol.Message) (any, error) {
 	switch req.Method {
 	case "instance.list":
-		return map[string]any{"instances": []protocol.Hello{{Type: "hello", InstanceID: e.id, Guide: e.guide}}}, nil
+		return map[string]any{"instances": []protocol.Hello{{Type: "hello", InstanceID: e.id}}}, nil
 	case "instance.get":
 		return protocol.Hello{Type: "hello", InstanceID: e.id, Guide: e.guide}, nil
 	case "exec.run", "job.start":
@@ -204,7 +204,7 @@ func (e *Engine) dispatch(req protocol.Message) (any, error) {
 		result["stderr_next_offset"] = ee
 		result["output_truncated"] = so > 0 || eo > 0
 		if result["state"] == "timed_out" {
-			result["error"] = map[string]any{"code": "COMMAND_TIMEOUT", "message": "command exceeded timeout_ms and was terminated"}
+			result["error"] = map[string]any{"code": "COMMAND_TIMEOUT", "message": "命令超过 timeout_ms 限制，已被终止"}
 		}
 		return result, nil
 	case "job.status", "job.output", "job.cancel", "job.kill":
@@ -218,7 +218,7 @@ func (e *Engine) dispatch(req protocol.Message) (any, error) {
 			return nil, err
 		}
 		if p.Offset < 0 || (p.StdoutOffset != nil && *p.StdoutOffset < 0) || (p.StderrOffset != nil && *p.StderrOffset < 0) {
-			return nil, errors.New("offset must not be negative")
+			return nil, errors.New("offset 不能为负数")
 		}
 		j, err := e.getJob(p.JobID)
 		if err != nil {
@@ -251,6 +251,6 @@ func (e *Engine) dispatch(req protocol.Message) (any, error) {
 	case "file.upload", "file.download", "transfer.prepare", "transfer.status", "transfer.commit", "transfer.cancel":
 		return e.transferRequest(req)
 	default:
-		return nil, &protocol.Error{Code: "METHOD_NOT_FOUND", Message: fmt.Sprintf("unknown method %q", req.Method)}
+		return nil, &protocol.Error{Code: "METHOD_NOT_FOUND", Message: fmt.Sprintf("未知方法 %q", req.Method)}
 	}
 }

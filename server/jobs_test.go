@@ -20,7 +20,7 @@ func TestExecAndJobOutputOffsets(t *testing.T) {
 	}
 	got := result.Result.(map[string]any)
 	if got["stdout"] != "alpha" || got["stderr"] != "beta" {
-		t.Fatalf("unexpected output: %#v", got)
+		t.Fatalf("输出不符合预期：%#v", got)
 	}
 
 	params, _ = json.Marshal(commandParams{Command: "printf 'one'; sleep 1; printf 'two'"})
@@ -38,10 +38,35 @@ func TestExecAndJobOutputOffsets(t *testing.T) {
 	select {
 	case <-job.done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("job did not finish")
+		t.Fatal("任务未结束")
 	}
 	b, offset, end := job.stdout.Read(2)
 	if string(b) != "etwo" || offset != 2 || end != 6 {
-		t.Fatalf("offset read = %q [%d,%d)", b, offset, end)
+		t.Fatalf("偏移读取 = %q [%d,%d)", b, offset, end)
+	}
+}
+
+func TestInstanceGuideIsReturnedOnlyOnDemand(t *testing.T) {
+	e := NewEngine("win11prow", "Windows 平台指南正文")
+	defer e.Close()
+
+	list := e.Handle(protocol.Message{Version: 1, Type: "request", ClientID: "c", RequestID: "list", InstanceID: "win11prow", Method: "instance.list"})
+	if list.Error != nil {
+		t.Fatal(list.Error)
+	}
+	encoded, err := json.Marshal(list.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `{"instances":[{"type":"hello","instance_id":"win11prow"}]}` {
+		t.Fatalf("实例列表包含多余字段或指南：%s", encoded)
+	}
+
+	guide := e.Handle(protocol.Message{Version: 1, Type: "request", ClientID: "c", RequestID: "guide", InstanceID: "win11prow", Method: "instance.get"})
+	if guide.Error != nil {
+		t.Fatal(guide.Error)
+	}
+	if got := guide.Result.(protocol.Hello).Guide; got != "Windows 平台指南正文" {
+		t.Fatalf("按需读取的指南不匹配：%q", got)
 	}
 }

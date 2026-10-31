@@ -47,6 +47,32 @@ client 也可以直连：
 ./build/remote-mcp-client --remotes 127.0.0.1:9000
 ```
 
+### IPv6 与 DNS 地址
+
+client 的 `--gateway`、`--remotes` 和 server 的 `gateway` 支持 IPv4、IPv6 和 ASCII DNS 主机名，地址均须包含端口；IPv6 必须使用方括号：
+
+```bash
+./build/remote-mcp-client --remotes '[2001:db8::10]:9000'
+./build/remote-mcp-client --remotes remote.example.com:9000
+./build/remote-mcp-client --gateway relay.example.com:9098
+```
+
+以上 IPv6 为文档示例地址，部署时请替换为实际地址。server 配置示例：
+
+```yaml
+instance_id: "gpu-01"
+guide: "guide.md"
+listen: ":9000"
+gateway: "relay.example.com:9098"
+```
+
+- DNS 在拨号时由系统解析，保留 Go 的 TCP 双栈快速回退能力；不保证 WebSocket 握手失败后自动尝试另一地址。中文域名请使用 punycode；不支持带 zone 的 IPv6（如 `%en0`）。
+- server 的 `listen` 允许空 host（`:9000`）；`[::]:9000` 和空 host 的实际双栈监听效果依赖系统，不保证跨平台一致；主机名监听不代表绑定所有解析地址。
+- 控制和文件数据连接均显式直连，不使用 `HTTP_PROXY`、`HTTPS_PROXY` 等环境代理。**兼容变化：文件数据连接不再隐式使用环境代理。**
+- 控制与 `/data` 独立拨号，DNS 多个 A/AAAA 地址须指向同一个有状态服务进程；当前不支持通过 DNS 轮询分流到多个独立 server/transport 副本。
+- 当前直连需手动指定地址，没有自动发现、打洞或直连失败后回到中继的路由切换能力。IPv6 可路由也不代表防火墙允许入站。
+- 本次 IPv6/DNS 改造以单元测试、源码审查和 Windows 交叉编译验收；真实 IPv6 连通性、Windows 双栈监听、系统 DNS 与实际回退时延尚未实测。
+
 MCP Host 的 stdio 配置：
 
 ```json
@@ -59,6 +85,8 @@ MCP Host 的 stdio 配置：
   }
 }
 ```
+
+`instance_list` 只返回实例 ID 和在线状态，不包含指南正文；AI 需要使用某实例时再调用 `instance_get` 读取指南，避免无关指南占用上下文。
 
 ## 远程命令与脚本执行
 
@@ -94,6 +122,6 @@ go test -race ./...
 go vet ./...
 ```
 
-相对 `guide` 路径从 server 二进制目录读取；`gateway` 非空时 server 反向连接 transport。client 的 `--gateway` 和 `--remotes` 互斥，地址格式为 IP:PORT。
+相对 `guide` 路径从 server 二进制目录读取；`gateway` 非空时 server 反向连接 transport，但仍启动本地监听。client 的 `--gateway` 和 `--remotes` 互斥，地址格式为 `host:port`（IPv6 为 `[地址]:port`）。
 
-文件传输使用 5 MiB 分块、4 路并行、断点续传和 SHA-256 校验。第一版不提供认证、授权或路径沙箱，请部署在可信网络中。
+文件传输使用 5 MiB 分块、4 路并行、断点续传和 SHA-256 校验。当前不提供认证、授权或路径沙箱，请部署在可信网络或安全隧道内，不要直接向公网开放远程命令与文件端口。公网部署需另行落实 TLS、身份认证与授权、防火墙限制；IPv6 支持不改变这些安全要求。

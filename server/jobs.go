@@ -40,10 +40,10 @@ func newID() string { var b [16]byte; _, _ = rand.Read(b[:]); return hex.EncodeT
 
 func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 	if p.Command == "" {
-		return nil, errors.New("command must not be empty")
+		return nil, errors.New("命令不能为空")
 	}
 	if p.TimeoutMS < 0 || p.TimeoutMS > int64((365*24*time.Hour)/time.Millisecond) {
-		return nil, errors.New("timeout_ms must be between 0 and one year")
+		return nil, errors.New("timeout_ms 必须介于 0 与一年之间")
 	}
 	cmd := shellCommand(p.Command)
 	cmd.Dir = p.Cwd
@@ -137,7 +137,7 @@ func (e *Engine) getJob(id string) (*Job, error) {
 	j := e.jobs[id]
 	e.mu.RUnlock()
 	if j == nil {
-		return nil, fmt.Errorf("job %q not found (jobs expire 10 minutes after completion)", id)
+		return nil, fmt.Errorf("未找到任务 %q（任务在完成后 10 分钟过期）", id)
 	}
 	return j, nil
 }
@@ -160,10 +160,7 @@ func (e *Engine) publishJob(j *Job) {
 			*s.cursor = end
 			// 限制帧大小，避免大量输出阻塞控制通道。
 			for len(data) > 0 {
-				n := len(data)
-				if n > 64*1024 {
-					n = 64 * 1024
-				}
+				n := min(len(data), 64*1024)
 				e.broadcast(protocol.Message{Version: 1, Type: "event", ClientID: j.Request.ClientID, RequestID: j.Request.RequestID, InstanceID: e.id, Event: "job.output", Data: map[string]any{"job_id": j.ID, "stream": s.name, "offset": offset, "data_base64": base64.StdEncoding.EncodeToString(data[:n])}})
 				offset += int64(n)
 				data = data[n:]
