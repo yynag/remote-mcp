@@ -4,7 +4,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"sync"
@@ -49,7 +49,7 @@ func (r *Registry) Handler() http.Handler {
 		if err != nil {
 			return
 		}
-		log.Printf("server连接 remote=%s", req.RemoteAddr)
+		slog.Info("server连接", "remote", req.RemoteAddr)
 		r.serveServer(protocol.NewPeer(conn))
 	})
 	mux.HandleFunc("/client", func(w http.ResponseWriter, req *http.Request) {
@@ -57,7 +57,7 @@ func (r *Registry) Handler() http.Handler {
 		if err != nil {
 			return
 		}
-		log.Printf("client连接 remote=%s", req.RemoteAddr)
+		slog.Info("client连接", "remote", req.RemoteAddr)
 		r.serveClient(protocol.NewPeer(conn))
 	})
 	mux.HandleFunc("/data", r.data)
@@ -86,7 +86,7 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		r.dataMu.Lock()
 		pending, ok := r.dataWait[h.PairID]
 		if r.dataClosed || !ok || !sameDataIdentity(pending.h, h) {
-			log.Printf("数据连接配对失败 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
+			slog.Warn("数据连接配对失败", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 			r.dataMu.Unlock()
 			_ = conn.Close()
 			return
@@ -96,13 +96,13 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		r.dataActive[pending.conn] = pending.h
 		r.dataActive[conn] = h
 		r.dataMu.Unlock()
-		log.Printf("数据连接配对成功 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
+		slog.Info("数据连接配对成功", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 		relayData(pending.conn, conn)
 		r.dataMu.Lock()
 		delete(r.dataActive, pending.conn)
 		delete(r.dataActive, conn)
 		r.dataMu.Unlock()
-		log.Printf("数据中继结束 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
+		slog.Info("数据中继结束", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 		return
 	}
 	if h.Role != "client" || h.PairID == "" {
@@ -130,12 +130,12 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		if pending, ok := r.dataWait[h.PairID]; ok && pending.conn == conn {
 			delete(r.dataWait, h.PairID)
 			_ = conn.Close()
-			log.Printf("数据连接配对超时 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
+			slog.Warn("数据连接配对超时", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 		}
 	})
 	r.dataWait[h.PairID] = pendingData{conn: conn, h: h, timer: timer}
 	r.dataMu.Unlock()
-	log.Printf("数据连接等待配对 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
+	slog.Info("数据连接等待配对", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 	b, _ := json.Marshal(h)
 	open := protocol.Message{Version: protocol.Version, Type: "data.open", ClientID: h.ClientID, InstanceID: h.InstanceID, Params: b}
 	if err = s.Peer.Write(open); err != nil {
@@ -254,7 +254,7 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 	defer p.Close()
 	var hello protocol.Hello
 	if err := p.Read(&hello); err != nil || hello.Type != "hello" || hello.InstanceID == "" {
-		log.Printf("无效的 server hello: %v", err)
+		slog.Warn("无效的 server hello", "error", err)
 		return
 	}
 	r.Lock()
@@ -262,11 +262,11 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 	r.instances[hello.InstanceID] = &instance{Hello: hello, Peer: p}
 	r.Unlock()
 	if old != nil {
-		log.Printf("server实例替换 instance_id=%s", hello.InstanceID)
+		slog.Info("server实例替换", "instance_id", hello.InstanceID)
 		r.closeDataForInstance(hello.InstanceID)
 		old.Peer.Close()
 	} else {
-		log.Printf("server实例注册 instance_id=%s", hello.InstanceID)
+		slog.Info("server实例注册", "instance_id", hello.InstanceID)
 	}
 	_ = p.Write(protocol.Message{Version: 1, Type: "welcome", InstanceID: hello.InstanceID})
 	r.broadcast(hello, "")
@@ -281,7 +281,7 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 		r.Unlock()
 		if removed {
 			r.closeDataForInstance(hello.InstanceID)
-			log.Printf("server实例下线 instance_id=%s", hello.InstanceID)
+			slog.Info("server实例下线", "instance_id", hello.InstanceID)
 			r.broadcast(protocol.Message{Type: "instance.offline", InstanceID: hello.InstanceID}, "")
 		}
 	}()
@@ -304,7 +304,7 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 func (r *Registry) serveClient(p *protocol.Peer) {
 	clientID := ""
 	defer func() {
-		log.Printf("client断开 client_id=%s", clientID)
+		slog.Info("client断开", "client_id", clientID)
 		r.Lock()
 		delete(r.clients, p)
 		r.Unlock()
@@ -358,7 +358,7 @@ func (r *Registry) closeDataForInstance(instanceID string) {
 		pending.timer.Stop()
 		_ = pending.conn.Close()
 		delete(r.dataWait, pairID)
-		log.Printf("清理等待数据连接 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", pending.h.InstanceID, pending.h.ClientID, pending.h.TransferID, pending.h.PairID, pending.h.ChunkIndex)
+		slog.Info("清理等待数据连接", "instance_id", pending.h.InstanceID, "client_id", pending.h.ClientID, "transfer_id", pending.h.TransferID, "pair_id", pending.h.PairID, "chunk_index", pending.h.ChunkIndex)
 	}
 	for conn, h := range r.dataActive {
 		if h.InstanceID != instanceID {
@@ -366,7 +366,7 @@ func (r *Registry) closeDataForInstance(instanceID string) {
 		}
 		_ = conn.Close()
 		delete(r.dataActive, conn)
-		log.Printf("清理活动数据连接 instance_id=%s client_id=%s transfer_id=%s pair_id=%s chunk_index=%d", h.InstanceID, h.ClientID, h.TransferID, h.PairID, h.ChunkIndex)
+		slog.Info("清理活动数据连接", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 	}
 }
 

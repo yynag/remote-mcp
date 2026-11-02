@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"remote-mcp/internal/protocol"
@@ -12,12 +12,12 @@ import (
 // Reverse 持续连接中继，并在连接断开后自动重连。
 func Reverse(ctx context.Context, e *Engine, address string) {
 	for ctx.Err() == nil {
-		log.Printf("[连接中继] 实例=%s，地址=%s", e.id, address)
+		slog.Info("[连接中继]", "instance", e.id, "address", address)
 		dialer := wsdial.Control()
 		conn, _, err := dialer.DialContext(ctx, "ws://"+address+"/server", nil)
 		if err == nil {
 			wsdial.LogConnection("server.control", conn)
-			log.Printf("[中继连接成功] 实例=%s，地址=%s", e.id, address)
+			slog.Info("[中继连接成功]", "instance", e.id, "address", address)
 			p := protocol.NewPeer(conn)
 			done := make(chan struct{})
 			go func() {
@@ -29,9 +29,9 @@ func Reverse(ctx context.Context, e *Engine, address string) {
 			}()
 			e.ServeReversePeer(p, "ws://"+address+"/data")
 			close(done)
-			log.Printf("[中继连接断开] 实例=%s，地址=%s，将在2秒后重连", e.id, address)
+			slog.Warn("[中继连接断开]", "instance", e.id, "address", address)
 		} else {
-			log.Printf("[中继连接失败] 实例=%s，地址=%s，错误=%v", e.id, address, err)
+			slog.Error("[中继连接失败]", "instance", e.id, "address", address, "error", err)
 		}
 		select {
 		case <-ctx.Done():

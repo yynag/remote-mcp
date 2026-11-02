@@ -1,25 +1,26 @@
-# Windows 远端服务器指南
+# Windows 远端服务器使用指南
 
-## 环境
+## 环境与工具
 
-- Windows 工作区：`C:\Users\admin\Workspace`
-- 默认命令解释器：`powershell.exe -NoProfile -NonInteractive -Command`。
-- 已知工具：PowerShell 7.6.9、Python 3、WSL2 Fedora；使用其他工具前先检查是否安装。
-- Windows 原生环境用于运行 Windows 程序、处理 Windows 路径及使用 IDA、JADX 等工具。
-- Fedora WSL 用于 Linux 命令、脚本和编译工具链，通过 `wsl.exe -d Fedora -- <命令>` 调用。
-- Windows 工作区在 Fedora WSL 中通常对应 `/mnt/c/Users/admin/Workspace`。两种环境共享文件，但命令、路径和进程管理方式不同，不要混用。
+- 提供 Windows 11 和 Fedora WSL2；两者共享部分文件，但命令、路径和进程管理不可混用。
+- 已安装 PowerShell 7.6.9、Python 3 和 WSL2 Fedora；其他工具使用前检查是否可用。
+- Windows 程序及 IDA、JADX 等工具在 Windows 环境运行；Linux 命令和编译工具链使用 Fedora WSL2。
 
-## 工作区
+## 文件管理
 
-- `Research`：研究项目。创建项目前先检查是否已有相关目录；新项目放入独立子目录。
-- `Files`：用户文件。
-- 默认优先在 Windows 工作区操作。Windows 程序需要的文件保留在 Windows 文件系统；Linux 大量编译产生的临时文件可放在 Fedora 文件系统。
-- 工作区是操作建议，不是访问限制。需要在其他路径操作时，先向用户说明目标路径和影响。
+- Windows 工作区：`C:\Users\admin\Workspace`；Fedora WSL2 工作区：`~/Workspace`，不存在时创建。
+- Windows 工作区下，`Research` 存放研究项目，创建前检查是否已有相关项目；`Files` 存放用户文件。
+- 项目按主要运行环境放入对应工作区；Linux 编译及密集文件操作使用 WSL2 原生文件系统，避免跨文件系统访问带来的性能开销。
+- 仅在跨环境协作时共享文件，避免重复复制整个项目。
+- 工作区不是访问限制；操作其他路径前说明目标及影响。文件传输无路径沙箱，上传前确认可信实例、目标路径和覆盖选项。
+- 超出用户授权范围的文件修改或破坏性操作须先确认；不得在输出、脚本或日志中暴露密码、令牌或密钥。
 
-## 操作约定
+## 执行优化
 
-- 执行前确认当前 shell、操作系统和工作目录。SSH 登录默认是 `cmd.exe`；MCP 命令在 Windows 上使用 `powershell.exe`。需要 PowerShell 7 时明确运行 `pwsh.exe`。
-- 命令按当前 shell 语法原样执行，不会自动转换或转义。复杂或多行脚本写入文件后，使用明确的解释器调用，例如 `pwsh.exe -File`、`python` 或 `wsl.exe -d Fedora -- bash`。
-- 未经用户明确确认，不删除、移动、覆盖或批量改名 `Files` 和已有项目中的内容。安装软件、修改系统配置、提升权限、停止服务等操作前，先说明影响并取得确认。
-- 网络故障排除命令和参数错误后最多重试三次；仍失败则停止并报告。长任务设置超时，记录任务 ID，并检查退出码和结果。
-- 不在命令输出、脚本或日志中暴露密码、令牌和密钥。
+- MCP 的 `exec_run`/`job_start` 使用 `powershell.exe -NoProfile -NonInteractive -Command`，不是 PowerShell 7；需要时显式调用 `pwsh.exe`。SSH 默认使用 `cmd.exe`。
+- Linux 任务通过 `wsl.exe -d Fedora -- <命令>` 执行。
+- 命令按目标 shell 原样解析，不自动转换语法或转义；不要拼接未经校验的参数。
+- 复杂或多行脚本优先写成文件，检查后上传，再显式调用已安装的解释器。
+- 长任务使用后台执行并设置合理超时，记录任务 ID 和输出位置；完成后核对退出码及预期结果。
+- 网络失败先确认执行状态，避免重复操作；无法恢复时报告错误，不无限重试。
+- 安装软件、修改系统、提权或停止服务前，确认已有用户授权。

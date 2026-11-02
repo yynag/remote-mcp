@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -96,19 +96,18 @@ func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 		e.mu.Lock()
 		delete(e.peers, p)
 		e.mu.Unlock()
-		log.Printf("[客户端断开] 实例=%s，连接=%s，模式=%s，远端=%s", e.id, connectionID, mode, remote)
+		slog.Info("[客户端断开]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote)
 	}()
 	if err := p.Write(protocol.Hello{Type: "hello", InstanceID: e.id}); err != nil {
-		log.Printf("[实例介绍发送失败] 实例=%s，连接=%s，远端=%s，原因=%v", e.id, connectionID, remote, err)
+		slog.Error("[实例介绍发送失败]", "instance", e.id, "connection", connectionID, "remote", remote, "error", err)
 		return
 	}
-	log.Printf("[实例介绍已发送] 实例=%s，连接=%s，模式=%s，远端=%s，指南字节数=%d", e.id, connectionID, mode, remote, len(e.guide))
+	slog.Info("[实例介绍已发送]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote, "guide_bytes", len(e.guide))
 	go p.Heartbeat()
-	heartbeatCount := 0
 	for {
 		var req protocol.Message
 		if err := p.Read(&req); err != nil {
-			log.Printf("[客户端连接结束] 实例=%s，连接=%s，模式=%s，远端=%s，原因=%v", e.id, connectionID, mode, remote, err)
+			slog.Warn("[客户端连接结束]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote, "error", err)
 			return
 		}
 		switch req.Type {
@@ -121,23 +120,19 @@ func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 			}
 			continue
 		case "welcome":
-			log.Printf("[中继注册成功] 实例=%s，连接=%s，远端=%s", e.id, connectionID, remote)
+			slog.Info("[中继注册成功]", "instance", e.id, "connection", connectionID, "remote", remote)
 			continue
 		case "heartbeat":
 			if err := p.Write(protocol.Message{Type: "heartbeat_ack"}); err != nil {
-				log.Printf("[心跳应答失败] 实例=%s，连接=%s，远端=%s，原因=%v", e.id, connectionID, remote, err)
+				slog.Error("[心跳应答失败]", "instance", e.id, "connection", connectionID, "remote", remote, "error", err)
 				return
 			}
 			continue
 		case "heartbeat_ack":
-			heartbeatCount++
-			if heartbeatCount%12 == 0 {
-				log.Printf("[连接心跳正常] 实例=%s，连接=%s，远端=%s，累计应答=%d", e.id, connectionID, remote, heartbeatCount)
-			}
 			continue
 		}
 		if err := req.ValidateRequest(); err != nil {
-			log.Printf("[请求格式错误] 实例=%s，连接=%s，远端=%s，类型=%s，原因=%v", e.id, connectionID, remote, req.Type, err)
+			slog.Warn("[请求格式错误]", "instance", e.id, "connection", connectionID, "remote", remote, "type", req.Type, "error", err)
 			_ = p.Write(protocol.Failure(req, "INVALID_REQUEST", err))
 			continue
 		}
@@ -145,10 +140,10 @@ func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 			_ = p.Write(protocol.Failure(req, "INSTANCE_OFFLINE", errors.New("未知实例")))
 			continue
 		}
-		log.Printf("[请求已接收] 实例=%s，连接=%s，client=%s，请求=%s，方法=%s", e.id, connectionID, req.ClientID, req.RequestID, req.Method)
+		slog.Info("[请求已接收]", "instance", e.id, "connection", connectionID, "client", req.ClientID, "request", req.RequestID, "method", req.Method)
 		go func(req protocol.Message) {
 			if err := p.Write(e.Handle(req)); err != nil {
-				log.Printf("[响应发送失败] 实例=%s，连接=%s，client=%s，请求=%s，方法=%s，原因=%v", e.id, connectionID, req.ClientID, req.RequestID, req.Method, err)
+				slog.Error("[响应发送失败]", "instance", e.id, "connection", connectionID, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "error", err)
 			}
 		}(req)
 	}
@@ -161,13 +156,13 @@ func (e *Engine) Handle(req protocol.Message) protocol.Message {
 	if err != nil {
 		var pe *protocol.Error
 		if errors.As(err, &pe) {
-			log.Printf("[请求失败] 实例=%s，client=%s，请求=%s，方法=%s，耗时=%s，代码=%s，原因=%s", e.id, req.ClientID, req.RequestID, req.Method, time.Since(started).Round(time.Millisecond), pe.Code, pe.Message)
+			slog.Warn("[请求失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond), "code", pe.Code, "reason", pe.Message)
 			return protocol.Failure(req, pe.Code, errors.New(pe.Message))
 		}
-		log.Printf("[请求失败] 实例=%s，client=%s，请求=%s，方法=%s，耗时=%s，原因=%v", e.id, req.ClientID, req.RequestID, req.Method, time.Since(started).Round(time.Millisecond), err)
+		slog.Error("[请求失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond), "error", err)
 		return protocol.Failure(req, "REQUEST_FAILED", err)
 	}
-	log.Printf("[请求完成] 实例=%s，client=%s，请求=%s，方法=%s，耗时=%s", e.id, req.ClientID, req.RequestID, req.Method, time.Since(started).Round(time.Millisecond))
+	slog.Info("[请求完成]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond))
 	return protocol.Success(req, result)
 }
 

@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os/exec"
 	"sync"
 	"time"
@@ -51,13 +51,13 @@ func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 	cmd.Stdout = &j.stdout
 	cmd.Stderr = &j.stderr
 	if err := cmd.Start(); err != nil {
-		log.Printf("[命令启动失败] 实例=%s，client=%s，请求=%s，原因=%v", e.id, req.ClientID, req.RequestID, err)
+		slog.Error("[命令启动失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "error", err)
 		return nil, err
 	}
 	e.mu.Lock()
 	e.jobs[j.ID] = j
 	e.mu.Unlock()
-	log.Printf("[任务已启动] 实例=%s，任务=%s，client=%s，请求=%s，cwd=%q，命令字节数=%d，超时毫秒=%d", e.id, j.ID, req.ClientID, req.RequestID, p.Cwd, len(p.Command), p.TimeoutMS)
+	slog.Info("[任务已启动]", "instance", e.id, "job", j.ID, "client", req.ClientID, "request", req.RequestID, "cwd", p.Cwd, "command_bytes", len(p.Command), "timeout_ms", p.TimeoutMS)
 	go func() {
 		err := cmd.Wait()
 		j.mu.Lock()
@@ -79,7 +79,7 @@ func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 		close(j.done)
 		state, exitCode, duration := j.state, j.exitCode, j.ended.Sub(j.started).Round(time.Millisecond)
 		j.mu.Unlock()
-		log.Printf("[任务结束] 实例=%s，任务=%s，client=%s，请求=%s，状态=%s，退出码=%d，耗时=%s", e.id, j.ID, req.ClientID, req.RequestID, state, exitCode, duration)
+		slog.Info("[任务结束]", "instance", e.id, "job", j.ID, "client", req.ClientID, "request", req.RequestID, "state", state, "exit_code", exitCode, "duration", duration)
 	}()
 	go e.publishJob(j)
 	if p.TimeoutMS > 0 {
@@ -103,11 +103,11 @@ func (j *Job) stop(reason string, force bool) error {
 		return nil
 	}
 	if err := signalProcess(j.cmd, force); err != nil {
-		log.Printf("[任务终止失败] 任务=%s，原因=%s，强制=%t，错误=%v", j.ID, reason, force, err)
+		slog.Error("[任务终止失败]", "job", j.ID, "reason", reason, "force", force, "error", err)
 		return err
 	}
 	j.stopReason = reason
-	log.Printf("[任务终止请求] 任务=%s，原因=%s，强制=%t", j.ID, reason, force)
+	slog.Info("[任务终止请求]", "job", j.ID, "reason", reason, "force", force)
 	if !force {
 		go func() {
 			timer := time.NewTimer(3 * time.Second)

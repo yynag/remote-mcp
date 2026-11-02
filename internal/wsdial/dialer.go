@@ -2,7 +2,7 @@
 package wsdial
 
 import (
-	"log"
+	"log/slog"
 	"net"
 	"time"
 
@@ -28,7 +28,7 @@ func newDialer(timeout time.Duration) *websocket.Dialer {
 // LogConnection 仅记录最终套接字的地址族，不记录地址、URL、凭据或传输元数据。
 // 仅在拨号成功后调用。
 func LogConnection(channel string, conn *websocket.Conn) {
-	log.Printf("[WebSocket连接] 通道=%s，本地地址族=%s，远端地址族=%s", channel, addressFamily(conn.LocalAddr()), addressFamily(conn.RemoteAddr()))
+	slog.Info("[WebSocket连接]", "channel", channel, "local_address_family", addressFamily(conn.LocalAddr()), "remote_address_family", addressFamily(conn.RemoteAddr()))
 }
 
 func addressFamily(addr net.Addr) string {

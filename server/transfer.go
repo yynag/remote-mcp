@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -282,7 +282,7 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
-		log.Printf("[文件传输已准备] 实例=%s，client=%s，传输=%s，方向=%s，路径=%q，大小=%d，分块数=%d，并发=%d，已完成块=%d", e.id, req.ClientID, t.spec.TransferID, t.spec.Direction, t.spec.Path, t.spec.Size, len(t.spec.ChunkSHA256), t.spec.Concurrency, len(t.done))
+		slog.Info("[文件传输已准备]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "direction", t.spec.Direction, "path", t.spec.Path, "size", t.spec.Size, "chunks", len(t.spec.ChunkSHA256), "concurrency", t.spec.Concurrency, "completed_chunks", len(t.done))
 		return t.status(), nil
 	}
 	t, err := e.transfers.get(p.TransferID, req.ClientID)
@@ -297,7 +297,7 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 		if t.state != "completed" {
 			t.cleanup("cancelled")
 		}
-		log.Printf("[文件传输已取消] 实例=%s，client=%s，传输=%s，已完成块=%d/%d", e.id, req.ClientID, t.spec.TransferID, len(t.done), len(t.spec.ChunkSHA256))
+		slog.Info("[文件传输已取消]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "completed_chunks", len(t.done), "total_chunks", len(t.spec.ChunkSHA256))
 		return t.status(), nil
 	case "transfer.commit":
 		if t.state == "completed" {
@@ -344,7 +344,7 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 			t.file = nil
 		}
 		t.state = "completed"
-		log.Printf("[文件传输已提交] 实例=%s，client=%s，传输=%s，方向=%s，路径=%q，大小=%d，SHA256=%s", e.id, req.ClientID, t.spec.TransferID, t.spec.Direction, t.spec.Path, t.spec.Size, t.spec.SHA256)
+		slog.Info("[文件传输已提交]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "direction", t.spec.Direction, "path", t.spec.Path, "size", t.spec.Size, "sha256", t.spec.SHA256)
 	case "transfer.status":
 		if t.state == "active" && t.spec.Direction == "download" {
 			if err = t.sourceUnchanged(); err != nil {
@@ -365,11 +365,11 @@ func (e *Engine) ServeData(w http.ResponseWriter, r *http.Request) {
 	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var h protocol.DataHandshake
 	if err = c.ReadJSON(&h); err != nil {
-		log.Printf("[文件数据握手失败] 实例=%s，远端=%s，原因=%v", e.id, r.RemoteAddr, err)
+		slog.Error("[文件数据握手失败]", "instance", e.id, "remote", r.RemoteAddr, "error", err)
 		_ = c.Close()
 		return
 	}
-	log.Printf("[文件数据连接] 实例=%s，client=%s，传输=%s，分块=%d，方向=%s，远端=%s", e.id, h.ClientID, h.TransferID, h.ChunkIndex, h.Direction, r.RemoteAddr)
+	slog.Info("[文件数据连接]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "remote", r.RemoteAddr)
 	e.serveData(c, h)
 }
 func dataJSON(c *websocket.Conn, v any) error {
@@ -381,7 +381,7 @@ func (e *Engine) serveData(c *websocket.Conn, h protocol.DataHandshake) {
 	c.SetReadLimit(protocol.MaxDataFrame)
 	err := e.dataChunk(c, h)
 	if err != nil {
-		log.Printf("[文件分块失败] 实例=%s，client=%s，传输=%s，分块=%d，方向=%s，原因=%v", e.id, h.ClientID, h.TransferID, h.ChunkIndex, h.Direction, err)
+		slog.Error("[文件分块失败]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "error", err)
 		_ = dataJSON(c, map[string]any{"type": "data.error", "error": err.Error()})
 	}
 }
@@ -491,6 +491,6 @@ func (e *Engine) dataChunk(c *websocket.Conn, h protocol.DataHandshake) error {
 	// 先删除活动记录再确认，确保随后可以立即提交。
 	delete(t.active, h.ChunkIndex)
 	t.mu.Unlock()
-	log.Printf("[文件分块完成] 实例=%s，client=%s，传输=%s，分块=%d，方向=%s，字节数=%d，耗时=%s", e.id, h.ClientID, h.TransferID, h.ChunkIndex, h.Direction, length, time.Since(started).Round(time.Millisecond))
+	slog.Info("[文件分块完成]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "bytes", length, "duration", time.Since(started).Round(time.Millisecond))
 	return dataJSON(c, map[string]any{"type": "data.done", "sha256": h.SHA256})
 }

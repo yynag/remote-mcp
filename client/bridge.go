@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strings"
@@ -168,7 +168,7 @@ func (c *connection) reconnect() {
 		}
 		if !c.connected() {
 			if err := c.connect(c.bridge.ctx); err != nil {
-				log.Printf("远端连接失败：%v", err)
+				slog.Error("远端连接失败", "error", err)
 				if !waitContext(c.bridge.ctx, 2*time.Second) {
 					return
 				}
@@ -196,7 +196,7 @@ func (c *connection) readLoop() {
 	for c.bridge.ctx.Err() == nil {
 		var message wireMessage
 		if err := conn.ReadJSON(&message); err != nil {
-			log.Printf("远端连接断开：地址=%s，原因=%v", c.url, err)
+			slog.Warn("远端连接断开", "address", c.url, "error", err)
 			return
 		}
 		// 应用层心跳同样证明连接存活，必须刷新读取期限，不能只依赖 pong。
@@ -470,7 +470,7 @@ func (b *Bridge) checkLoop() {
 						defer cancel()
 						result, err := b.requestOn(ctx, c, "*", "instance.list", map[string]any{})
 						if err != nil {
-							log.Printf("获取中继实例列表失败：%v", err)
+							slog.Error("获取中继实例列表失败", "error", err)
 							return
 						}
 						response, ok := result.(map[string]any)

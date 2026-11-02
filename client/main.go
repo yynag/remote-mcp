@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,14 +14,16 @@ import (
 func main() {
 	options, err := ParseArgs(os.Args[1:])
 	if err != nil {
-		log.Fatal(err)
+		slog.Error(err.Error())
+		os.Exit(1)
 	}
 	bridge := NewBridge(options)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err = bridge.Start(ctx); err != nil {
 		bridge.Close()
-		log.Fatal(err)
+		slog.Error(err.Error())
+		os.Exit(1)
 	}
 	defer bridge.Close()
 	server := NewMCPServer(bridge)

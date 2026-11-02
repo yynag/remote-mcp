@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -15,20 +16,30 @@ import (
 )
 
 func main() {
-	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	log.SetPrefix("[remote-mcp-server] ")
 	config := flag.String("config", "config.yaml", "服务端 YAML 配置文件路径")
+	debug := flag.Bool("debug", false, "启用 DEBUG 日志")
 	flag.Parse()
+	level := slog.LevelInfo
+	if *debug {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	log.SetFlags(0)
+	log.SetPrefix("[remote-mcp-server] ")
+	log.SetOutput(slog.NewLogLogger(slog.Default().Handler(), slog.LevelInfo).Writer())
 	if flag.NArg() != 0 {
-		log.Fatal("不接受位置参数")
+		slog.Error("不接受位置参数")
+		os.Exit(1)
 	}
 	cfg, guide, err := LoadConfig(*config)
 	if err != nil {
-		log.Fatalf("[启动失败] 配置加载失败，文件=%s，原因=%v", *config, err)
+		slog.Error("[启动失败] 配置加载失败", "文件", *config, "原因", err)
+		os.Exit(1)
 	}
 	listener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
-		log.Fatalf("[启动失败] 监听端口失败，实例=%s，地址=%s，原因=%v", cfg.InstanceID, cfg.Listen, err)
+		slog.Error("[启动失败] 监听端口失败", "实例", cfg.InstanceID, "地址", cfg.Listen, "原因", err)
+		os.Exit(1)
 	}
 	defer listener.Close()
 	e := NewEngine(cfg.InstanceID, guide)
@@ -39,14 +50,14 @@ func main() {
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := protocol.Upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("[WebSocket升级失败] 路径=/ws，远端=%s，原因=%v", r.RemoteAddr, err)
+			slog.Error("[WebSocket升级失败]", "path", "/ws", "remote", r.RemoteAddr, "error", err)
 			return
 		}
-		log.Printf("[客户端连接] 模式=直连，远端=%s", conn.RemoteAddr())
+		slog.Info("[客户端连接]", "mode", "直连", "remote", conn.RemoteAddr())
 		e.ServePeer(protocol.NewPeer(conn))
 	})
 	mux.HandleFunc("/data", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[文件数据连接请求] 远端=%s", r.RemoteAddr)
+		slog.Info("[文件数据连接请求]", "remote", r.RemoteAddr)
 		e.ServeData(w, r)
 	})
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -63,10 +74,10 @@ func main() {
 	if cfg.Gateway != "" {
 		mode = "反向连接"
 	}
-	log.Printf("[启动成功] 实例=%s，模式=%s，监听=%s，transport=%s，指南字节数=%d", cfg.InstanceID, mode, listener.Addr(), cfg.Gateway, len(guide))
+	slog.Info("[启动成功]", "instance", cfg.InstanceID, "mode", mode, "listen", listener.Addr(), "transport", cfg.Gateway, "guide_bytes", len(guide))
 	if err = srv.Serve(listener); err != nil && err != http.ErrServerClosed {
-		log.Printf("[服务异常退出] 实例=%s，原因=%v", cfg.InstanceID, err)
+		slog.Error("[服务异常退出]", "实例", cfg.InstanceID, "原因", err)
 		os.Exit(1)
 	}
-	log.Printf("[服务已停止] 实例=%s", cfg.InstanceID)
+	slog.Info("[服务已停止]", "instance", cfg.InstanceID)
 }
