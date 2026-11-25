@@ -1,4 +1,4 @@
-// Package server 实现远端命令执行和文件传输服务。
+// Package server implements remote command execution and file transfer services.
 package main
 
 import (
@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config 是 server 支持的唯一 YAML 配置格式。
+// Config is the only YAML configuration format supported by the server.
 type Config struct {
 	InstanceID string `yaml:"instance_id"`
 	Guide      string `yaml:"guide"`
@@ -21,7 +21,7 @@ type Config struct {
 	Gateway    string `yaml:"gateway"`
 }
 
-// LoadConfig 读取服务端配置和指南正文。
+// LoadConfig reads the server configuration and guide body.
 func LoadConfig(path string) (Config, string, error) {
 	var cfg Config
 	b, err := os.ReadFile(path)
@@ -34,26 +34,26 @@ func LoadConfig(path string) (Config, string, error) {
 		return cfg, "", err
 	}
 	if err = decoder.Decode(new(any)); err != io.EOF {
-		return cfg, "", fmt.Errorf("配置文件只能包含一个 YAML 文档")
+		return cfg, "", fmt.Errorf("configuration file must contain exactly one YAML document")
 	}
 	if cfg.InstanceID == "" || cfg.Guide == "" || cfg.Listen == "" {
-		return cfg, "", fmt.Errorf("配置必须包含 instance_id、guide 和 listen")
+		return cfg, "", fmt.Errorf("configuration must include instance_id, guide, and listen")
 	}
 	listen, err := endpoint.ParseListen(cfg.Listen)
 	if err != nil {
-		return cfg, "", fmt.Errorf("无效的 listen 地址 %q：%w", cfg.Listen, err)
+		return cfg, "", fmt.Errorf("invalid listen address %q: %w", cfg.Listen, err)
 	}
 	cfg.Listen = listen
 	if cfg.Gateway != "" {
 		gateway, err := endpoint.ParseDial(cfg.Gateway)
 		if err != nil {
-			return cfg, "", fmt.Errorf("无效的 gateway HOST:PORT 地址 %q：%w", cfg.Gateway, err)
+			return cfg, "", fmt.Errorf("invalid gateway HOST:PORT address %q: %w", cfg.Gateway, err)
 		}
 		cfg.Gateway = gateway
 	}
 	guidePath := cfg.Guide
 	if !filepath.IsAbs(guidePath) {
-		// 优先从可执行文件所在目录读取指南，便于将二进制、配置和 guide.md 一起部署。
+		// Prefer reading the guide from the executable's directory so the binary, configuration, and guide.md can be deployed together.
 		if executable, executableErr := os.Executable(); executableErr == nil {
 			candidate := filepath.Join(filepath.Dir(executable), guidePath)
 			if _, candidateErr := os.Stat(candidate); candidateErr == nil {
@@ -69,7 +69,7 @@ func LoadConfig(path string) (Config, string, error) {
 		return cfg, "", err
 	}
 	if len(b) > 1024*1024 {
-		return cfg, "", fmt.Errorf("指南正文超过 1 MiB")
+		return cfg, "", fmt.Errorf("guide body exceeds 1 MiB")
 	}
 	return cfg, string(b), nil
 }

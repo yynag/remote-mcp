@@ -1,4 +1,4 @@
-// Package wsdial 为控制通道和数据通道提供直连 WebSocket 拨号。
+// Package wsdial provides direct WebSocket dialing for control and data channels.
 package wsdial
 
 import (
@@ -9,26 +9,26 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Control 保留控制通道的 5 秒握手预算。
+// Control keeps the 5-second handshake budget for the control channel.
 func Control() *websocket.Dialer { return newDialer(5 * time.Second) }
 
-// Data 保留 Gorilla 原有的默认 45 秒握手预算。
-// 调用方 context 中更早的截止时间仍优先生效。
+// Data keeps Gorilla's original default 45-second handshake budget.
+// An earlier deadline in the caller's context still takes precedence.
 func Data() *websocket.Dialer { return newDialer(45 * time.Second) }
 
 func newDialer(timeout time.Duration) *websocket.Dialer {
 	return &websocket.Dialer{
-		Proxy:            nil, // 两类通道均直连，不读取环境代理。
+		Proxy:            nil, // Both channels connect directly and ignore environment proxies.
 		HandshakeTimeout: timeout,
-		// 保持 NetDialContext 为 nil：Gorilla 使用网络类型为 "tcp" 的 net.Dialer，
-		// 保留系统 DNS 解析和 Go 的双栈回退能力。
+		// Keep NetDialContext nil: Gorilla uses a net.Dialer with network type "tcp",
+		// preserving system DNS resolution and Go's dual-stack fallback.
 	}
 }
 
-// LogConnection 仅记录最终套接字的地址族，不记录地址、URL、凭据或传输元数据。
-// 仅在拨号成功后调用。
+// LogConnection logs only the address family of the final socket; it does not log addresses, URLs, credentials, or transfer metadata.
+// Call it only after a successful dial.
 func LogConnection(channel string, conn *websocket.Conn) {
-	slog.Info("[WebSocket连接]", "channel", channel, "local_address_family", addressFamily(conn.LocalAddr()), "remote_address_family", addressFamily(conn.RemoteAddr()))
+	slog.Info("[WebSocket connection]", "channel", channel, "local_address_family", addressFamily(conn.LocalAddr()), "remote_address_family", addressFamily(conn.RemoteAddr()))
 }
 
 func addressFamily(addr net.Addr) string {

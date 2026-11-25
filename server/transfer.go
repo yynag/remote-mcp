@@ -92,14 +92,14 @@ func (s *transferStore) get(id, client string) (*transfer, error) {
 	defer s.mu.Unlock()
 	t := s.m[id]
 	if t == nil || t.client != client {
-		return nil, transferError("TRANSFER_NOT_FOUND", "该客户端没有对应的传输")
+		return nil, transferError("TRANSFER_NOT_FOUND", "no transfer for this client")
 	}
 	t.mu.Lock()
 	if time.Now().After(t.expires) {
 		t.cleanup("expired")
 		delete(s.m, id)
 		t.mu.Unlock()
-		return nil, transferError("TRANSFER_EXPIRED", "传输保留期限已过期")
+		return nil, transferError("TRANSFER_EXPIRED", "transfer retention period has expired")
 	}
 	t.mu.Unlock()
 	return t, nil
@@ -132,16 +132,16 @@ func (t *transfer) sourceUnchanged() error {
 		return err
 	}
 	if !os.SameFile(t.source, info) || info.Size() != t.source.Size() || !info.ModTime().Equal(t.source.ModTime()) {
-		return transferError("SOURCE_CHANGED", "传输期间源文件的大小或修改时间发生变化")
+		return transferError("SOURCE_CHANGED", "source file size or modification time changed during transfer")
 	}
 	return nil
 }
 func (s *transferStore) prepare(p protocol.TransferSpec, client string) (*transfer, error) {
 	if p.Path == "" || (p.Direction != "upload" && p.Direction != "download") {
-		return nil, transferError("INVALID_REQUEST", "必须提供 path 和 direction（upload/download）")
+		return nil, transferError("INVALID_REQUEST", "path and direction (upload/download) must be provided")
 	}
 	if (p.ChunkSize != 0 && p.ChunkSize != protocol.DefaultChunkSize) || (p.Concurrency != 0 && p.Concurrency != protocol.DefaultConcurrency) {
-		return nil, transferError("INVALID_REQUEST", "传输固定使用 5 MiB 分块和 4 个 worker")
+		return nil, transferError("INVALID_REQUEST", "transfer uses fixed 5 MiB chunks and 4 workers")
 	}
 	p.ChunkSize = protocol.DefaultChunkSize
 	p.Concurrency = protocol.DefaultConcurrency
@@ -150,7 +150,7 @@ func (s *transferStore) prepare(p protocol.TransferSpec, client string) (*transf
 		return nil, err
 	}
 	p.Path = filepath.Clean(path)
-	// 解析已经存在的父目录符号链接，避免通过别名绕过目标文件锁。
+	// Resolve existing parent directory symlinks so aliases cannot bypass the destination file lock.
 	if parent, e := filepath.EvalSymlinks(filepath.Dir(p.Path)); e == nil {
 		p.Path = filepath.Join(parent, filepath.Base(p.Path))
 	}
@@ -159,27 +159,27 @@ func (s *transferStore) prepare(p protocol.TransferSpec, client string) (*transf
 	if p.TransferID != "" {
 		t := s.m[p.TransferID]
 		if t == nil {
-			return nil, transferError("TRANSFER_NOT_FOUND", "续传时找不到对应的传输")
+			return nil, transferError("TRANSFER_NOT_FOUND", "transfer not found for resume")
 		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		if time.Now().After(t.expires) {
 			t.cleanup("expired")
 			delete(s.m, p.TransferID)
-			return nil, transferError("TRANSFER_EXPIRED", "传输保留期限已过期")
+			return nil, transferError("TRANSFER_EXPIRED", "transfer retention period has expired")
 		}
 		if t.state != "active" || t.spec.Path != p.Path || t.spec.Direction != p.Direction || (p.Direction == "upload" && (t.spec.Size != p.Size || t.spec.SHA256 != p.SHA256 || t.spec.MTime != p.MTime || t.spec.Overwrite != p.Overwrite || !slices.Equal(t.spec.ChunkSHA256, p.ChunkSHA256))) {
-			return nil, transferError("TRANSFER_MISMATCH", "续传信息与原始源文件或目标不一致")
+			return nil, transferError("TRANSFER_MISMATCH", "resume information does not match the original source or destination")
 		}
 		if len(t.active) != 0 {
-			return nil, transferError("TRANSFER_BUSY", "续传前请关闭已有的数据通道")
+			return nil, transferError("TRANSFER_BUSY", "close existing data channels before resuming")
 		}
 		if p.Direction == "download" {
 			if err = t.sourceUnchanged(); err != nil {
 				return nil, err
 			}
 		}
-		// 客户端重启后可以使用传输 ID 继续传输。这只是路由，不是认证；第一版只运行在可信网络中。
+		// A client can resume by transfer ID after a restart. This is routing, not authentication; the first version runs only on trusted networks.
 		t.client = client
 		t.touch()
 		return t, nil
@@ -189,7 +189,7 @@ func (s *transferStore) prepare(p protocol.TransferSpec, client string) (*transf
 		conflict := t.state == "active" && t.spec.Path == p.Path
 		t.mu.Unlock()
 		if conflict {
-			return nil, transferError("TRANSFER_CONFLICT", "该路径已存在进行中的传输")
+			return nil, transferError("TRANSFER_CONFLICT", "a transfer for this path is already in progress")
 		}
 	}
 	t := &transfer{spec: p, client: client, done: make(map[int]bool), active: make(map[int]*websocket.Conn), state: "active"}
@@ -205,16 +205,16 @@ func (s *transferStore) prepare(p protocol.TransferSpec, client string) (*transf
 			count++
 		}
 		if p.Size < 0 || !validSHA(p.SHA256) || int64(len(p.ChunkSHA256)) != count {
-			return nil, transferError("INVALID_REQUEST", "大小或 SHA256 清单无效")
+			return nil, transferError("INVALID_REQUEST", "size or SHA256 manifest is invalid")
 		}
 		for _, h := range p.ChunkSHA256 {
 			if !validSHA(h) {
-				return nil, transferError("INVALID_REQUEST", "分块 SHA256 无效")
+				return nil, transferError("INVALID_REQUEST", "chunk SHA256 is invalid")
 			}
 		}
 		if !p.Overwrite {
 			if _, e := os.Lstat(p.Path); e == nil {
-				return nil, transferError("TARGET_EXISTS", "目标已存在；overwrite 默认为 false")
+				return nil, transferError("TARGET_EXISTS", "target already exists; overwrite defaults to false")
 			} else if !os.IsNotExist(e) {
 				return nil, e
 			}
@@ -240,7 +240,7 @@ func (s *transferStore) prepare(p protocol.TransferSpec, client string) (*transf
 		}
 		if !t.source.Mode().IsRegular() {
 			t.cleanup("failed")
-			return nil, errors.New("源必须是普通文件")
+			return nil, errors.New("source must be a regular file")
 		}
 		t.spec.Size = t.source.Size()
 		t.spec.MTime = strconv.FormatInt(t.source.ModTime().UnixNano(), 10)
@@ -282,7 +282,7 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
-		slog.Info("[文件传输已准备]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "direction", t.spec.Direction, "path", t.spec.Path, "size", t.spec.Size, "chunks", len(t.spec.ChunkSHA256), "concurrency", t.spec.Concurrency, "completed_chunks", len(t.done))
+		slog.Info("[file transfer prepared]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "direction", t.spec.Direction, "path", t.spec.Path, "size", t.spec.Size, "chunks", len(t.spec.ChunkSHA256), "concurrency", t.spec.Concurrency, "completed_chunks", len(t.done))
 		return t.status(), nil
 	}
 	t, err := e.transfers.get(p.TransferID, req.ClientID)
@@ -297,14 +297,14 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 		if t.state != "completed" {
 			t.cleanup("cancelled")
 		}
-		slog.Info("[文件传输已取消]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "completed_chunks", len(t.done), "total_chunks", len(t.spec.ChunkSHA256))
+		slog.Info("[file transfer cancelled]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "completed_chunks", len(t.done), "total_chunks", len(t.spec.ChunkSHA256))
 		return t.status(), nil
 	case "transfer.commit":
 		if t.state == "completed" {
 			return t.status(), nil
 		}
 		if t.state != "active" || len(t.active) != 0 || len(t.done) != len(t.spec.ChunkSHA256) {
-			return nil, transferError("TRANSFER_INCOMPLETE", "并非所有分块都已通过校验")
+			return nil, transferError("TRANSFER_INCOMPLETE", "not all chunks have passed verification")
 		}
 		if t.spec.Direction == "download" {
 			if err = t.sourceUnchanged(); err != nil {
@@ -316,7 +316,7 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 				return nil, er
 			}
 			if whole != t.spec.SHA256 {
-				return nil, transferError("SHA256_MISMATCH", "整文件 SHA256 不匹配")
+				return nil, transferError("SHA256_MISMATCH", "whole-file SHA256 mismatch")
 			}
 			if err = t.file.Sync(); err != nil {
 				return nil, err
@@ -327,7 +327,7 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 			t.file = nil
 			if t.spec.Overwrite {
 				err = os.Rename(t.tmp, t.spec.Path)
-			} else { // 硬链接创建操作是原子的，不会覆盖并发创建的目标文件。
+			} else { // Hard link creation is atomic and does not overwrite a concurrently created destination file.
 				err = os.Link(t.tmp, t.spec.Path)
 				if err == nil {
 					_ = os.Remove(t.tmp)
@@ -344,7 +344,7 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 			t.file = nil
 		}
 		t.state = "completed"
-		slog.Info("[文件传输已提交]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "direction", t.spec.Direction, "path", t.spec.Path, "size", t.spec.Size, "sha256", t.spec.SHA256)
+		slog.Info("[file transfer committed]", "instance", e.id, "client", req.ClientID, "transfer", t.spec.TransferID, "direction", t.spec.Direction, "path", t.spec.Path, "size", t.spec.Size, "sha256", t.spec.SHA256)
 	case "transfer.status":
 		if t.state == "active" && t.spec.Direction == "download" {
 			if err = t.sourceUnchanged(); err != nil {
@@ -355,7 +355,7 @@ func (e *Engine) transferRequest(req protocol.Message) (any, error) {
 	return t.status(), nil
 }
 
-// ServeData 处理独立文件分块数据 WebSocket。
+// ServeData handles an independent file chunk data WebSocket.
 func (e *Engine) ServeData(w http.ResponseWriter, r *http.Request) {
 	c, err := protocol.Upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -365,11 +365,11 @@ func (e *Engine) ServeData(w http.ResponseWriter, r *http.Request) {
 	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var h protocol.DataHandshake
 	if err = c.ReadJSON(&h); err != nil {
-		slog.Error("[文件数据握手失败]", "instance", e.id, "remote", r.RemoteAddr, "error", err)
+		slog.Error("[file data handshake failed]", "instance", e.id, "remote", r.RemoteAddr, "error", err)
 		_ = c.Close()
 		return
 	}
-	slog.Info("[文件数据连接]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "remote", r.RemoteAddr)
+	slog.Info("[file data connection]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "remote", r.RemoteAddr)
 	e.serveData(c, h)
 }
 func dataJSON(c *websocket.Conn, v any) error {
@@ -381,13 +381,13 @@ func (e *Engine) serveData(c *websocket.Conn, h protocol.DataHandshake) {
 	c.SetReadLimit(protocol.MaxDataFrame)
 	err := e.dataChunk(c, h)
 	if err != nil {
-		slog.Error("[文件分块失败]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "error", err)
+		slog.Error("[file chunk failed]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "error", err)
 		_ = dataJSON(c, map[string]any{"type": "data.error", "error": err.Error()})
 	}
 }
 func (e *Engine) dataChunk(c *websocket.Conn, h protocol.DataHandshake) error {
 	if h.Type != "data" || h.InstanceID != e.id {
-		return errors.New("无效的数据连接身份")
+		return errors.New("invalid data connection identity")
 	}
 	t, err := e.transfers.get(h.TransferID, h.ClientID)
 	if err != nil {
@@ -396,13 +396,13 @@ func (e *Engine) dataChunk(c *websocket.Conn, h protocol.DataHandshake) error {
 	t.mu.Lock()
 	if t.state != "active" || h.ChunkIndex < 0 || h.ChunkIndex >= len(t.spec.ChunkSHA256) || h.Direction != t.spec.Direction {
 		t.mu.Unlock()
-		return errors.New("传输或分块无效")
+		return errors.New("invalid transfer or chunk")
 	}
 	off := int64(h.ChunkIndex) * protocol.DefaultChunkSize
 	length := min(int64(protocol.DefaultChunkSize), t.spec.Size-off)
 	if h.Offset != off || h.Length != length || h.SHA256 != t.spec.ChunkSHA256[h.ChunkIndex] || t.active[h.ChunkIndex] != nil || len(t.active) >= protocol.DefaultConcurrency {
 		t.mu.Unlock()
-		return errors.New("分块范围或 SHA256 无效，或分块正忙")
+		return errors.New("chunk range or SHA256 is invalid, or the chunk is busy")
 	}
 	if t.spec.Direction == "download" {
 		if err = t.sourceUnchanged(); err != nil {
@@ -437,7 +437,7 @@ func (e *Engine) dataChunk(c *websocket.Conn, h protocol.DataHandshake) error {
 				return er
 			}
 			if typ != websocket.BinaryMessage || len(b) == 0 || int64(len(b)) > length-pos {
-				return errors.New("无效的数据帧")
+				return errors.New("invalid data frame")
 			}
 			if _, er = f.WriteAt(b, off+pos); er != nil {
 				return er
@@ -461,7 +461,7 @@ func (e *Engine) dataChunk(c *websocket.Conn, h protocol.DataHandshake) error {
 		t.mu.Unlock()
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != h.SHA256 {
-		return transferError("SHA256_MISMATCH", "分块 SHA256 不匹配")
+		return transferError("SHA256_MISMATCH", "chunk SHA256 mismatch")
 	}
 	if h.Direction == "download" {
 		_ = c.SetReadDeadline(time.Now().Add(30 * time.Second))
@@ -473,13 +473,13 @@ func (e *Engine) dataChunk(c *websocket.Conn, h protocol.DataHandshake) error {
 			return err
 		}
 		if ack.Type != "data.ack" || ack.SHA256 != h.SHA256 {
-			return errors.New("分块确认无效")
+			return errors.New("invalid chunk acknowledgement")
 		}
 	}
 	t.mu.Lock()
 	if t.state != "active" {
 		t.mu.Unlock()
-		return errors.New("传输已取消")
+		return errors.New("transfer was cancelled")
 	}
 	if h.Direction == "download" {
 		if err = t.sourceUnchanged(); err != nil {
@@ -488,9 +488,9 @@ func (e *Engine) dataChunk(c *websocket.Conn, h protocol.DataHandshake) error {
 		}
 	}
 	t.done[h.ChunkIndex] = true
-	// 先删除活动记录再确认，确保随后可以立即提交。
+	// Remove the active record before acknowledging so the transfer can be committed immediately.
 	delete(t.active, h.ChunkIndex)
 	t.mu.Unlock()
-	slog.Info("[文件分块完成]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "bytes", length, "duration", time.Since(started).Round(time.Millisecond))
+	slog.Info("[file chunk completed]", "instance", e.id, "client", h.ClientID, "transfer", h.TransferID, "chunk", h.ChunkIndex, "direction", h.Direction, "bytes", length, "duration", time.Since(started).Round(time.Millisecond))
 	return dataJSON(c, map[string]any{"type": "data.done", "sha256": h.SHA256})
 }

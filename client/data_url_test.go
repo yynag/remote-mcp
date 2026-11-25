@@ -15,11 +15,11 @@ func TestDataURLPreservesAuthority(t *testing.T) {
 		t.Run(tt.endpoint, func(t *testing.T) {
 			got, err := dataURL(tt.endpoint)
 			if err != nil || got != tt.want {
-				t.Fatalf("dataURL(%q) = %q, %v；期望 %q", tt.endpoint, got, err, tt.want)
+				t.Fatalf("dataURL(%q) = %q, %v; want %q", tt.endpoint, got, err, tt.want)
 			}
 		})
 	}
 	if _, err := dataURL("ws://[::1"); err == nil {
-		t.Fatal("期望得到无效 URL 错误")
+		t.Fatal("expected an invalid URL error")
 	}
 }

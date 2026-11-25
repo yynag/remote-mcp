@@ -63,7 +63,7 @@ type connection struct {
 	lastSeen atomic.Int64
 }
 
-// Bridge 管理直连和中继连接、实例状态以及请求响应。
+// Bridge manages direct and relay connections, instance state, and request/response handling.
 type Bridge struct {
 	clientID    string
 	options     Options
@@ -79,7 +79,7 @@ type Bridge struct {
 	closeOnce   sync.Once
 }
 
-// NewBridge 创建 WebSocket 客户端桥接。
+// NewBridge creates a WebSocket client bridge.
 func NewBridge(options Options) *Bridge {
 	ctx, cancel := context.WithCancel(context.Background())
 	bridge := &Bridge{
@@ -98,10 +98,10 @@ func NewBridge(options Options) *Bridge {
 	return bridge
 }
 
-// Start 并行尝试所有入口；至少一条连接成功后继续后台重连。
+// Start tries all endpoints in parallel; after at least one connection succeeds it keeps reconnecting in the background.
 func (b *Bridge) Start(ctx context.Context) error {
 	if len(b.connections) == 0 {
-		return errors.New("没有可连接的远端地址")
+		return errors.New("no remote address to connect to")
 	}
 	results := make(chan error, len(b.connections))
 	for _, conn := range b.connections {
@@ -117,7 +117,7 @@ func (b *Bridge) Start(ctx context.Context) error {
 		for _, conn := range b.connections {
 			go conn.reconnect()
 		}
-		return errors.New("没有远端入口可用")
+		return errors.New("no remote endpoint is available")
 	}
 	for _, conn := range b.connections {
 		go conn.reconnect()
@@ -131,9 +131,9 @@ func (c *connection) connect(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, c.url, nil)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("连接 %s：HTTP %s", c.url, response.Status)
+			return fmt.Errorf("connect %s: HTTP %s", c.url, response.Status)
 		}
-		return fmt.Errorf("连接 %s：%w", c.url, err)
+		return fmt.Errorf("connect %s: %w", c.url, err)
 	}
 	wsdial.LogConnection("client.control", conn)
 	conn.SetReadLimit(8 * 1024 * 1024)
@@ -141,18 +141,18 @@ func (c *connection) connect(ctx context.Context) error {
 	var hello wireMessage
 	if err = conn.ReadJSON(&hello); err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("读取入口介绍 %s：%w", c.url, err)
+		return fmt.Errorf("read endpoint introduction %s: %w", c.url, err)
 	}
 	if (c.gateway && hello.Type != "instances") || (!c.gateway && hello.Type != "hello") {
 		_ = conn.Close()
-		return fmt.Errorf("入口 %s 返回了无效的介绍消息 %q", c.url, hello.Type)
+		return fmt.Errorf("endpoint %s returned an invalid introduction message %q", c.url, hello.Type)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	c.mu.Lock()
 	if c.stopped {
 		c.mu.Unlock()
 		_ = conn.Close()
-		return errors.New("连接已关闭")
+		return errors.New("connection is closed")
 	}
 	c.conn = conn
 	c.mu.Unlock()
@@ -168,7 +168,7 @@ func (c *connection) reconnect() {
 		}
 		if !c.connected() {
 			if err := c.connect(c.bridge.ctx); err != nil {
-				slog.Error("远端连接失败", "error", err)
+				slog.Error("remote connection failed", "error", err)
 				if !waitContext(c.bridge.ctx, 2*time.Second) {
 					return
 				}
@@ -196,10 +196,10 @@ func (c *connection) readLoop() {
 	for c.bridge.ctx.Err() == nil {
 		var message wireMessage
 		if err := conn.ReadJSON(&message); err != nil {
-			slog.Warn("远端连接断开", "address", c.url, "error", err)
+			slog.Warn("remote connection lost", "address", c.url, "error", err)
 			return
 		}
-		// 应用层心跳同样证明连接存活，必须刷新读取期限，不能只依赖 pong。
+		// Application-level heartbeats also prove the connection is alive, so the read deadline must be refreshed; do not rely on pong alone.
 		_ = conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 		c.lastSeen.Store(time.Now().UnixNano())
 		c.bridge.receive(c, message)
@@ -231,7 +231,7 @@ func (c *connection) current() *websocket.Conn {
 func (c *connection) send(message any) error {
 	conn := c.current()
 	if conn == nil {
-		return errors.New("INSTANCE_OFFLINE: WebSocket 未连接")
+		return errors.New("INSTANCE_OFFLINE: WebSocket is not connected")
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
@@ -345,7 +345,7 @@ func (b *Bridge) receiveResponse(conn *connection, message wireMessage) {
 	pending.result <- rpcReply{result: append(json.RawMessage(nil), message.Result...)}
 }
 
-// List 返回发现到的实例和当前在线状态。
+// List returns the discovered instances and their current online state.
 func (b *Bridge) List() []map[string]any {
 	b.mu.RLock()
 	list := make([]map[string]any, 0, len(b.instances))
@@ -357,7 +357,7 @@ func (b *Bridge) List() []map[string]any {
 	return list
 }
 
-// Request 向指定实例发送一条控制协议请求。
+// Request sends a control protocol request to the specified instance.
 func (b *Bridge) Request(ctx context.Context, instanceID, method string, params any) (any, error) {
 	b.mu.RLock()
 	instance := b.instances[instanceID]
@@ -387,7 +387,7 @@ func (b *Bridge) requestOn(ctx context.Context, conn *connection, instanceID, me
 		b.mu.Lock()
 		delete(b.pending, requestID)
 		b.mu.Unlock()
-		return nil, fmt.Errorf("发送请求失败：%w", err)
+		return nil, fmt.Errorf("send request: %w", err)
 	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
@@ -398,7 +398,7 @@ func (b *Bridge) requestOn(ctx context.Context, conn *connection, instanceID, me
 	case response := <-result:
 		if response.err != nil {
 			if remoteErr, ok := response.err.(*protocol.Error); ok && remoteErr.Code == "METHOD_NOT_FOUND" && strings.HasPrefix(method, "session.") {
-				return nil, errors.New("该实例不支持交互式会话，请升级 server")
+				return nil, errors.New("this instance does not support interactive sessions; upgrade the server")
 			}
 			return nil, response.err
 		}
@@ -413,7 +413,7 @@ func (b *Bridge) requestOn(ctx context.Context, conn *connection, instanceID, me
 		b.mu.Lock()
 		delete(b.pending, requestID)
 		b.mu.Unlock()
-		return nil, fmt.Errorf("请求 %s：%w", method, ctx.Err())
+		return nil, fmt.Errorf("request %s: %w", method, ctx.Err())
 	case <-b.ctx.Done():
 		return nil, errors.New("CLIENT_CLOSED")
 	}
@@ -442,7 +442,7 @@ func requestBudget(method string, params json.RawMessage) time.Duration {
 	}
 }
 
-// ConnectionFor 返回实例当前控制连接的 WebSocket 地址。
+// ConnectionFor returns the WebSocket address of the instance's current control connection.
 func (b *Bridge) ConnectionFor(instanceID string) (string, error) {
 	connection, err := b.connectionFor(instanceID)
 	if err != nil {
@@ -485,7 +485,7 @@ func (b *Bridge) checkLoop() {
 						defer cancel()
 						result, err := b.requestOn(ctx, c, "*", "instance.list", map[string]any{})
 						if err != nil {
-							slog.Error("获取中继实例列表失败", "error", err)
+							slog.Error("failed to list relay instances", "error", err)
 							return
 						}
 						response, ok := result.(map[string]any)
@@ -501,7 +501,7 @@ func (b *Bridge) checkLoop() {
 	}
 }
 
-// Close 结束 WebSocket 连接和未完成的请求。
+// Close ends WebSocket connections and pending requests.
 func (b *Bridge) Close() {
 	b.closeOnce.Do(func() {
 		b.cancel()

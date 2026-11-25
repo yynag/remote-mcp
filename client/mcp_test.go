@@ -87,7 +87,7 @@ func TestMCPSessionErrors(t *testing.T) {
 	for _, tc := range []struct {
 		tool, arguments, want string
 	}{
-		{"session_list", `{"instance_id":"remote"}`, "该实例不支持交互式会话，请升级 server"},
+		{"session_list", `{"instance_id":"remote"}`, "this instance does not support interactive sessions; upgrade the server"},
 		{"session_close", `{"instance_id":"remote","session_id":"s"}`, "SESSION_NOT_FOUND: closed"},
 		{"exec_run", `{"instance_id":"remote","command":"demo"}`, "METHOD_NOT_FOUND: unsupported"},
 	} {

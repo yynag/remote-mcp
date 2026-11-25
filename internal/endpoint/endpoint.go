@@ -1,4 +1,4 @@
-// Package endpoint 校验 host:port 地址，不执行 DNS 查询。
+// Package endpoint validates host:port addresses without performing DNS lookups.
 package endpoint
 
 import (
@@ -9,60 +9,60 @@ import (
 	"strings"
 )
 
-// ParseDial 校验远端地址，返回规范化的 host:port 形式。
-// 保留 DNS 原始拼写（包括尾随根域点），供解析器使用。
+// ParseDial validates a remote address and returns it in canonical host:port form.
+// It preserves the original DNS spelling (including a trailing root dot) for the resolver.
 func ParseDial(value string) (string, error) {
 	return parse(value, false)
 }
 
-// ParseListen 还允许监听地址使用空主机名，表示通配监听。
-// 为符合应用的配置端口策略，明确不支持零端口。
+// ParseListen also allows an empty host name for listen addresses, meaning a wildcard listener.
+// To match the application's configured port policy, port zero is explicitly unsupported.
 func ParseListen(value string) (string, error) {
 	return parse(value, true)
 }
 
 func parse(value string, allowEmptyHost bool) (string, error) {
 	if strings.Contains(value, "%") {
-		return "", fmt.Errorf("不支持 IPv6 zone 和百分号转义")
+		return "", fmt.Errorf("IPv6 zones and percent escapes are not supported")
 	}
 	if strings.ContainsAny(value, "/\\?#@") {
-		return "", fmt.Errorf("期望 host:port 形式，而不是 URL")
+		return "", fmt.Errorf("expected host:port form, not a URL")
 	}
 	host, port, err := net.SplitHostPort(value)
 	if err != nil {
-		return "", fmt.Errorf("期望 host:port 形式（IPv6 需要方括号）：%w", err)
+		return "", fmt.Errorf("expected host:port form (IPv6 addresses require brackets): %w", err)
 	}
 	if port == "" {
-		return "", fmt.Errorf("必须提供端口")
+		return "", fmt.Errorf("port must be provided")
 	}
 	for _, c := range port {
 		if c < '0' || c > '9' {
-			return "", fmt.Errorf("端口只能包含 ASCII 十进制数字")
+			return "", fmt.Errorf("port must contain only ASCII decimal digits")
 		}
 	}
 	n, err := strconv.ParseUint(port, 10, 16)
 	if err != nil || n == 0 {
-		return "", fmt.Errorf("端口必须在 1..65535 范围内")
+		return "", fmt.Errorf("port must be in the range 1..65535")
 	}
 	bracketed := strings.HasPrefix(value, "[")
 	switch {
 	case host == "":
 		if !allowEmptyHost || bracketed {
-			return "", fmt.Errorf("必须提供主机名（只有监听地址允许空主机名）")
+			return "", fmt.Errorf("host name must be provided (only listen addresses allow an empty host name)")
 		}
 	case strings.Contains(host, ":"):
 		ip, err := netip.ParseAddr(host)
 		if err != nil || !ip.Is6() || !bracketed {
-			return "", fmt.Errorf("方括号内的 IPv6 地址无效")
+			return "", fmt.Errorf("invalid IPv6 address inside brackets")
 		}
 		host = ip.String()
 	case bracketed:
-		return "", fmt.Errorf("方括号仅对 IPv6 地址有效")
+		return "", fmt.Errorf("brackets are only valid for IPv6 addresses")
 	default:
 		if ip, err := netip.ParseAddr(host); err == nil {
 			host = ip.String()
 		} else if !validDNSName(host) {
-			return "", fmt.Errorf("无效的 ASCII DNS 主机名或 IP 地址：%q", host)
+			return "", fmt.Errorf("invalid ASCII DNS host name or IP address: %q", host)
 		}
 	}
 	return net.JoinHostPort(host, strconv.FormatUint(n, 10)), nil
@@ -86,9 +86,9 @@ func validDNSName(host string) bool {
 		}
 		allNumeric = allNumeric && numericLabel(label)
 	}
-	// 不将格式错误或旧式数字 IP 地址重新解释为 DNS。非末尾的数字标签
-	// （如 123.example）可以接受，但纯十进制末尾标签不能作为主机名顶级域。
-	// 同时拒绝以 0x 为前缀的旧式整数 IP 形式。
+	// Do not reinterpret malformed or legacy numeric IP addresses as DNS. Numeric non-final labels
+	// (such as 123.example) are acceptable, but a purely decimal final label cannot be a host name's
+	// top-level domain. Also reject legacy integer IP forms prefixed with 0x.
 	last := labels[len(labels)-1]
 	return !allNumeric && !decimal(last)
 }

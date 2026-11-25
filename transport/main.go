@@ -13,8 +13,8 @@ import (
 )
 
 func main() {
-	listen := flag.String("listen", ":9098", "监听地址")
-	debug := flag.Bool("debug", false, "启用 DEBUG 日志")
+	listen := flag.String("listen", ":9098", "listen address")
+	debug := flag.Bool("debug", false, "enable DEBUG logging")
 	flag.Parse()
 	level := slog.LevelInfo
 	if *debug {
@@ -24,7 +24,7 @@ func main() {
 	log.SetFlags(0)
 	log.SetOutput(slog.NewLogLogger(slog.Default().Handler(), slog.LevelInfo).Writer())
 	if flag.NArg() != 0 {
-		slog.Error("不接受位置参数")
+		slog.Error("positional arguments are not accepted")
 		os.Exit(1)
 	}
 	registry := NewRegistry()
@@ -38,7 +38,7 @@ func main() {
 		defer done()
 		_ = srv.Shutdown(shutdown)
 	}()
-	slog.Info("transport 开始监听", "addr", *listen)
+	slog.Info("transport listening", "addr", *listen)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error(err.Error())
 		os.Exit(1)

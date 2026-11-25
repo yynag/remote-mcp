@@ -20,7 +20,7 @@ type commandParams struct {
 	TimeoutMS int64  `json:"timeout_ms,omitempty"`
 }
 
-// Job 保存远端命令进程及其有界输出缓存。
+// Job holds a remote command process and its bounded output buffers.
 type Job struct {
 	mu         sync.Mutex
 	ID         string
@@ -40,10 +40,10 @@ func newID() string { var b [16]byte; _, _ = rand.Read(b[:]); return hex.EncodeT
 
 func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 	if p.Command == "" {
-		return nil, errors.New("命令不能为空")
+		return nil, errors.New("command must not be empty")
 	}
 	if p.TimeoutMS < 0 || p.TimeoutMS > int64((365*24*time.Hour)/time.Millisecond) {
-		return nil, errors.New("timeout_ms 必须介于 0 与一年之间")
+		return nil, errors.New("timeout_ms must be between 0 and one year")
 	}
 	cmd := shellCommand(p.Command)
 	cmd.Dir = p.Cwd
@@ -55,7 +55,7 @@ func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 	cmd.Stdout = &j.stdout
 	cmd.Stderr = &j.stderr
 	if err := cmd.Start(); err != nil {
-		slog.Error("[命令启动失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "error", err)
+		slog.Error("[command start failed]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "error", err)
 		return nil, errors.Join(err, pg.close())
 	}
 	if err := pg.attach(cmd); err != nil {
@@ -63,7 +63,7 @@ func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 		closeErr := pg.close()
 		if killErr != nil {
 			go cmd.Wait()
-			return nil, errors.Join(err, closeErr, fmt.Errorf("终止启动失败的进程: %w", killErr))
+			return nil, errors.Join(err, closeErr, fmt.Errorf("terminate process after start failure: %w", killErr))
 		}
 		_ = cmd.Wait()
 		return nil, errors.Join(err, closeErr)
@@ -76,15 +76,15 @@ func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 		_ = j.stop("killed", true)
 	default:
 	}
-	slog.Info("[任务已启动]", "instance", e.id, "job", j.ID, "client", req.ClientID, "request", req.RequestID, "cwd", p.Cwd, "command_bytes", len(p.Command), "timeout_ms", p.TimeoutMS)
+	slog.Info("[job started]", "instance", e.id, "job", j.ID, "client", req.ClientID, "request", req.RequestID, "cwd", p.Cwd, "command_bytes", len(p.Command), "timeout_ms", p.TimeoutMS)
 	go func() {
 		if j.pg.waitRoot() {
-			// 根进程已退出，先终止仍持有输出管道的子进程，再排空输出。
+			// The root process has exited; terminate child processes that still hold the output pipes, then drain the output.
 			j.mu.Lock()
 			cleanupErr := j.pg.terminate(true)
 			j.mu.Unlock()
 			if cleanupErr != nil {
-				slog.Error("[任务子进程回收失败]", "job", j.ID, "error", cleanupErr)
+				slog.Error("[failed to reap job children]", "job", j.ID, "error", cleanupErr)
 			}
 		}
 		err := cmd.Wait()
@@ -109,9 +109,9 @@ func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 		state, exitCode, duration := j.state, j.exitCode, j.ended.Sub(j.started).Round(time.Millisecond)
 		j.mu.Unlock()
 		if closeErr != nil {
-			slog.Error("[任务进程组释放失败]", "job", j.ID, "error", closeErr)
+			slog.Error("[failed to release job process group]", "job", j.ID, "error", closeErr)
 		}
-		slog.Info("[任务结束]", "instance", e.id, "job", j.ID, "client", req.ClientID, "request", req.RequestID, "state", state, "exit_code", exitCode, "duration", duration)
+		slog.Info("[job ended]", "instance", e.id, "job", j.ID, "client", req.ClientID, "request", req.RequestID, "state", state, "exit_code", exitCode, "duration", duration)
 	}()
 	go e.publishJob(j)
 	if p.TimeoutMS > 0 {
@@ -135,11 +135,11 @@ func (j *Job) stop(reason string, force bool) error {
 		return nil
 	}
 	if err := j.pg.terminate(force); err != nil {
-		slog.Error("[任务终止失败]", "job", j.ID, "reason", reason, "force", force, "error", err)
+		slog.Error("[job termination failed]", "job", j.ID, "reason", reason, "force", force, "error", err)
 		return err
 	}
 	j.stopReason = reason
-	slog.Info("[任务终止请求]", "job", j.ID, "reason", reason, "force", force)
+	slog.Info("[job termination requested]", "job", j.ID, "reason", reason, "force", force)
 	if !force {
 		go func() {
 			timer := time.NewTimer(3 * time.Second)
@@ -169,7 +169,7 @@ func (e *Engine) getJob(id string) (*Job, error) {
 	j := e.jobs[id]
 	e.mu.RUnlock()
 	if j == nil {
-		return nil, fmt.Errorf("未找到任务 %q（任务在完成后 10 分钟过期）", id)
+		return nil, fmt.Errorf("job %q not found (jobs expire 10 minutes after completion)", id)
 	}
 	return j, nil
 }
@@ -185,12 +185,12 @@ func (e *Engine) publishJob(j *Job) {
 			cursor *int64
 		}{{"stdout", &j.stdout, &stdoutOffset}, {"stderr", &j.stderr, &stderrOffset}} {
 			data, offset, end := s.out.Read(*s.cursor)
-			// 如果有界输出尾部丢弃了旧字节，首个推送帧从保留区起点开始，而不是从零开始。
+			// If the bounded output tail dropped old bytes, the first pushed frame starts at the beginning of the retained region rather than at zero.
 			if *s.cursor < offset {
 				*s.cursor = offset
 			}
 			*s.cursor = end
-			// 限制帧大小，避免大量输出阻塞控制通道。
+			// Limit frame size so large output does not block the control channel.
 			for len(data) > 0 {
 				n := min(len(data), 64*1024)
 				e.broadcast(protocol.Message{Version: 1, Type: "event", ClientID: j.Request.ClientID, RequestID: j.Request.RequestID, InstanceID: e.id, Event: "job.output", Data: map[string]any{"job_id": j.ID, "stream": s.name, "offset": offset, "data_base64": base64.StdEncoding.EncodeToString(data[:n])}})

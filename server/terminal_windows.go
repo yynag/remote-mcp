@@ -65,7 +65,7 @@ func newTerminal(command string, args []string, cwd string) (_ terminal, retErr 
 				retErr = errors.Join(retErr, err)
 			}
 		}
-		// 分配失败时 Job 可能未包含根进程，必须单独终止挂起进程。
+		// If assignment fails, the job may not contain the root process; the suspended process must be terminated separately.
 		if pi.Process != 0 && !assigned {
 			if err := windows.TerminateProcess(pi.Process, 1); err != nil {
 				retErr = errors.Join(retErr, fmt.Errorf("TerminateProcess (ConPTY startup): %w", err))
@@ -74,7 +74,7 @@ func newTerminal(command string, args []string, cwd string) (_ terminal, retErr 
 		if pi.Thread != 0 {
 			_ = windows.CloseHandle(pi.Thread)
 		}
-		// 启动失败时没有读循环，先断开管道，避免旧版 ConPTY 阻塞。
+		// There is no read loop when startup fails; close the pipes first so legacy ConPTY does not block.
 		for _, handle := range [...]windows.Handle{ptyIn, ptyOut, hostIn, hostOut} {
 			if handle != 0 && handle != windows.InvalidHandle {
 				_ = windows.CloseHandle(handle)
@@ -103,7 +103,7 @@ func newTerminal(command string, args []string, cwd string) (_ terminal, retErr 
 	if err := startConPTYProcess(hpc, cmdLine, dir, &pi); err != nil {
 		return nil, err
 	}
-	// 先加入 Job 再运行用户代码，避免子进程在分配前启动。
+	// Assign to the job before running user code so child processes do not start before assignment.
 	if err := windows.AssignProcessToJobObject(job, pi.Process); err != nil {
 		return nil, fmt.Errorf("AssignProcessToJobObject (ConPTY): %w", err)
 	}
@@ -119,7 +119,7 @@ func newTerminal(command string, args []string, cwd string) (_ terminal, retErr 
 	pi.Thread, ptyIn, ptyOut = 0, 0, 0
 
 	t := &windowsTerminal{hpc: hpc, job: job, process: pi.Process, pid: int(pi.ProcessId)}
-	// 新版释放控制台引用后，最后一个附着进程退出就会关闭输出。
+	// With newer versions, once the console reference is released, output closes when the last attached process exits.
 	t.legacy = true
 	if releasePseudoConsole.Find() == nil {
 		result, _, _ := releasePseudoConsole.Call(uintptr(hpc))
@@ -143,7 +143,7 @@ func newConPTYJob() (windows.Handle, error) {
 	}
 	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-	// x/sys 通过 uintptr 传递结构体地址，固定它直到系统调用返回。
+	// x/sys passes the struct address through uintptr; pin it until the system call returns.
 	var pin runtime.Pinner
 	pin.Pin(&info)
 	_, err = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
@@ -158,7 +158,7 @@ func newConPTYJob() (windows.Handle, error) {
 func closeConPTYJob(job windows.Handle) error {
 	err := windows.TerminateJobObject(job, 1)
 	if err != nil {
-		// 只在确认 Job 已无活动进程时忽略终止错误。
+		// Ignore the termination error only after confirming the job has no active processes.
 		var info struct {
 			totalUserTime, totalKernelTime, periodUserTime, periodKernelTime int64
 			pageFaults, totalProcesses, activeProcesses, terminatedProcesses uint32
@@ -185,7 +185,7 @@ func startConPTYProcess(hpc windows.Handle, cmdLine, dir *uint16, pi *windows.Pr
 		return fmt.Errorf("NewProcThreadAttributeList: %w", err)
 	}
 	defer attrs.Delete()
-	// 此属性接收指向系统分配的控制台对象的 HPCON 值，不是 &hpc。
+	// This attribute receives the HPCON value pointing to the system-allocated console object, not &hpc.
 	hpcValue := *(*unsafe.Pointer)(unsafe.Pointer(&hpc))
 	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hpcValue, unsafe.Sizeof(hpc)); err != nil {
 		return fmt.Errorf("UpdateProcThreadAttribute (ConPTY): %w", err)
@@ -199,7 +199,7 @@ func startConPTYProcess(hpc windows.Handle, cmdLine, dir *uint16, pi *windows.Pr
 	return nil
 }
 
-// 旧版 ConPTY 不会自行结束；根进程退出后关闭控制台，让读循环收到 EOF。
+// Legacy ConPTY does not end on its own; close the console after the root process exits so the read loop receives EOF.
 func (t *windowsTerminal) startExitWatcher() error {
 	stop, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
@@ -234,7 +234,7 @@ func (t *windowsTerminal) closeConsole() {
 	t.consoleOnce.Do(func() { windows.ClosePseudoConsole(t.hpc) })
 }
 
-// Wait 和 Close 中仅先取得句柄的一方可以使用并释放它。
+// Only the first of Wait and Close to acquire the handle may use and release it.
 func (t *windowsTerminal) takeProcess() windows.Handle {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -253,10 +253,10 @@ func (t *windowsTerminal) Close() error {
 				stopErr = windows.SetEvent(t.watchStop)
 			}
 			t.mu.Unlock()
-			// 主动关闭时，即使没有会话读循环，也要排空旧版控制台的输出。
+			// On explicit close, drain legacy console output even without a session read loop.
 			go func() { _, _ = io.Copy(io.Discard, t.out) }()
 		}
-		// 先终止 Job；关闭其最后一个句柄也可兜底，不受控制台关闭阻塞影响。
+		// Terminate the job first; closing its last handle also works as a fallback and is not affected by a blocked console close.
 		jobErr := closeConPTYJob(t.job)
 		t.closeConsole()
 		var processErr error

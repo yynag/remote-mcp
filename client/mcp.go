@@ -15,6 +15,8 @@ const (
 	sessionReadMaxWaitMS = 30_000
 )
 
+var version = "1.0.0"
+
 type toolArguments struct {
 	InstanceID   string `json:"instance_id"`
 	Command      string `json:"command"`
@@ -47,7 +49,7 @@ type toolDefinition struct {
 	schema      string
 }
 
-// toolDefinitions 提示词必须使用英文且满足提示词经济性。
+// toolDefinitions prompts must be in English and follow prompt economy.
 var toolDefinitions = []toolDefinition{
 	{"instance_list", "List instance IDs with online status. The usage guide body is not included.", `{"type":"object","properties":{},"additionalProperties":false}`},
 	{"instance_get", "Read the usage guide of an instance on demand. Call it before running remote commands to confirm the target OS, shell and workspace.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1}},"required":["instance_id"],"additionalProperties":false}`},
@@ -70,9 +72,9 @@ var toolDefinitions = []toolDefinition{
 	{"transfer_cancel", "Cancel a file transfer and clean up uncommitted temporary data.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"transfer_id":{"type":"string","minLength":1}},"required":["instance_id","transfer_id"],"additionalProperties":false}`},
 }
 
-// NewMCPServer 注册项目提供的完整 MCP 工具集合。
+// NewMCPServer registers the full set of MCP tools provided by the project.
 func NewMCPServer(bridge *Bridge) *mcpserver.MCPServer {
-	server := mcpserver.NewMCPServer("remote-mcp", "0.3.0",
+	server := mcpserver.NewMCPServer("remote-mcp", version,
 		mcpserver.WithRecovery(),
 		mcpserver.WithInputSchemaValidation(),
 	)
@@ -91,7 +93,7 @@ func NewMCPServer(bridge *Bridge) *mcpserver.MCPServer {
 			}
 			encoded, err := json.MarshalIndent(result, "", "  ")
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("编码工具结果失败：%v", err)), nil
+				return mcp.NewToolResultError(fmt.Sprintf("failed to encode tool result: %v", err)), nil
 			}
 			return mcp.NewToolResultText(string(encoded)), nil
 		})
@@ -106,14 +108,14 @@ func runTool(ctx context.Context, bridge *Bridge, name string, input map[string]
 		return nil, err
 	}
 	if err = json.Unmarshal(encoded, &args); err != nil {
-		return nil, fmt.Errorf("参数格式无效：%w", err)
+		return nil, fmt.Errorf("invalid argument format: %w", err)
 	}
 	if name == "instance_list" {
 		return bridge.List(), nil
 	}
 	if name == "file_upload" || name == "file_download" {
 		if args.ChunkSize != 0 && args.ChunkSize != defaultChunkSize || args.Concurrency != 0 && args.Concurrency != defaultConcurrency {
-			return nil, fmt.Errorf("文件传输固定使用 5 MiB 分块和 4 路并行")
+			return nil, fmt.Errorf("file transfer uses fixed 5 MiB chunks and 4-way concurrency")
 		}
 		transferArgs := transferArgs{
 			InstanceID: args.InstanceID, LocalPath: args.LocalPath, RemotePath: args.RemotePath,
@@ -191,7 +193,7 @@ func requestForTool(name string, args toolArguments) (string, map[string]any, er
 	case "transfer_status":
 		return "transfer.status", map[string]any{"transfer_id": args.TransferID}, nil
 	default:
-		return "", nil, fmt.Errorf("未知工具：%s", name)
+		return "", nil, fmt.Errorf("unknown tool: %s", name)
 	}
 }
 

@@ -1,4 +1,4 @@
-// Package transport 实现 WebSocket 中继和实例连接管理。
+// Package transport implements WebSocket relay and instance connection management.
 package main
 
 import (
@@ -19,7 +19,7 @@ type instance struct {
 	Peer  *protocol.Peer
 }
 
-// Registry 管理实例、客户端及配对中的数据连接。
+// Registry manages instances, clients, and data connections being paired.
 type Registry struct {
 	sync.RWMutex
 	instances  map[string]*instance
@@ -36,12 +36,12 @@ type pendingData struct {
 	timer *time.Timer
 }
 
-// NewRegistry 创建中继注册表。
+// NewRegistry creates a relay registry.
 func NewRegistry() *Registry {
 	return &Registry{instances: make(map[string]*instance), clients: make(map[*protocol.Peer]string), dataWait: make(map[string]pendingData), dataActive: make(map[*websocket.Conn]protocol.DataHandshake)}
 }
 
-// Handler 创建中继的 WebSocket 路由。
+// Handler creates the relay's WebSocket routes.
 func (r *Registry) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/server", func(w http.ResponseWriter, req *http.Request) {
@@ -49,7 +49,7 @@ func (r *Registry) Handler() http.Handler {
 		if err != nil {
 			return
 		}
-		slog.Info("server连接", "remote", req.RemoteAddr)
+		slog.Info("server connected", "remote", req.RemoteAddr)
 		r.serveServer(protocol.NewPeer(conn))
 	})
 	mux.HandleFunc("/client", func(w http.ResponseWriter, req *http.Request) {
@@ -57,14 +57,14 @@ func (r *Registry) Handler() http.Handler {
 		if err != nil {
 			return
 		}
-		slog.Info("client连接", "remote", req.RemoteAddr)
+		slog.Info("client connected", "remote", req.RemoteAddr)
 		r.serveClient(protocol.NewPeer(conn))
 	})
 	mux.HandleFunc("/data", r.data)
 	return mux
 }
 
-// 数据连接按传输和分块标识配对。中继为每一对连接独立转发二进制帧，不缓存文件。
+// Data connections are paired by transfer and chunk identity. The relay forwards binary frames independently for each pair and does not cache files.
 func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 	conn, err := protocol.Upgrader.Upgrade(w, req, nil)
 	if err != nil {
@@ -86,7 +86,7 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		r.dataMu.Lock()
 		pending, ok := r.dataWait[h.PairID]
 		if r.dataClosed || !ok || !sameDataIdentity(pending.h, h) {
-			slog.Warn("数据连接配对失败", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
+			slog.Warn("data connection pairing failed", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 			r.dataMu.Unlock()
 			_ = conn.Close()
 			return
@@ -96,13 +96,13 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		r.dataActive[pending.conn] = pending.h
 		r.dataActive[conn] = h
 		r.dataMu.Unlock()
-		slog.Info("数据连接配对成功", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
+		slog.Info("data connection paired", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 		relayData(pending.conn, conn)
 		r.dataMu.Lock()
 		delete(r.dataActive, pending.conn)
 		delete(r.dataActive, conn)
 		r.dataMu.Unlock()
-		slog.Info("数据中继结束", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
+		slog.Info("data relay finished", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 		return
 	}
 	if h.Role != "client" || h.PairID == "" {
@@ -116,8 +116,8 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		_ = conn.Close()
 		return
 	}
-	// 实例的反向连接接收数据连接请求，并负责拨号连接中继的数据端点。
-	// 数据连接与控制连接相互独立。
+	// The instance's reverse connection receives data connection requests and dials the relay's data endpoint.
+	// Data connections are independent of control connections.
 	r.dataMu.Lock()
 	if _, exists := r.dataWait[h.PairID]; exists || r.dataClosed {
 		r.dataMu.Unlock()
@@ -130,12 +130,12 @@ func (r *Registry) data(w http.ResponseWriter, req *http.Request) {
 		if pending, ok := r.dataWait[h.PairID]; ok && pending.conn == conn {
 			delete(r.dataWait, h.PairID)
 			_ = conn.Close()
-			slog.Warn("数据连接配对超时", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
+			slog.Warn("data connection pairing timed out", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 		}
 	})
 	r.dataWait[h.PairID] = pendingData{conn: conn, h: h, timer: timer}
 	r.dataMu.Unlock()
-	slog.Info("数据连接等待配对", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
+	slog.Info("data connection waiting for pairing", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 	b, _ := json.Marshal(h)
 	open := protocol.Message{Version: protocol.Version, Type: "data.open", ClientID: h.ClientID, InstanceID: h.InstanceID, Params: b}
 	if err = s.Peer.Write(open); err != nil {
@@ -176,7 +176,7 @@ func relayData(client, server *websocket.Conn) {
 	}
 	go copyFrames(server, client)
 	go copyFrames(client, server)
-	// 一侧传输时另一侧可能暂时没有数据。超时应作用于连接对，而不是分别限制两侧读取。
+	// While one side is transmitting, the other side may temporarily have no data. The timeout applies to the connection pair, not to reads on each side separately.
 	timer := time.NewTimer(30 * time.Second)
 	defer timer.Stop()
 	for {
@@ -204,7 +204,7 @@ func sameDataIdentity(a, b protocol.DataHandshake) bool {
 		a.ChunkIndex == b.ChunkIndex && a.Offset == b.Offset && a.Length == b.Length && a.SHA256 == b.SHA256
 }
 
-// Close 关闭待配对数据连接和所有控制连接。
+// Close closes pending data connections and all control connections.
 func (r *Registry) Close() {
 	r.dataMu.Lock()
 	r.dataClosed = true
@@ -254,7 +254,7 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 	defer p.Close()
 	var hello protocol.Hello
 	if err := p.Read(&hello); err != nil || hello.Type != "hello" || hello.InstanceID == "" {
-		slog.Warn("无效的 server hello", "error", err)
+		slog.Warn("invalid server hello", "error", err)
 		return
 	}
 	r.Lock()
@@ -262,11 +262,11 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 	r.instances[hello.InstanceID] = &instance{Hello: hello, Peer: p}
 	r.Unlock()
 	if old != nil {
-		slog.Info("server实例替换", "instance_id", hello.InstanceID)
+		slog.Info("server instance replaced", "instance_id", hello.InstanceID)
 		r.closeDataForInstance(hello.InstanceID)
 		old.Peer.Close()
 	} else {
-		slog.Info("server实例注册", "instance_id", hello.InstanceID)
+		slog.Info("server instance registered", "instance_id", hello.InstanceID)
 	}
 	_ = p.Write(protocol.Message{Version: 1, Type: "welcome", InstanceID: hello.InstanceID})
 	r.broadcast(hello, "")
@@ -281,7 +281,7 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 		r.Unlock()
 		if removed {
 			r.closeDataForInstance(hello.InstanceID)
-			slog.Info("server实例下线", "instance_id", hello.InstanceID)
+			slog.Info("server instance went offline", "instance_id", hello.InstanceID)
 			r.broadcast(protocol.Message{Type: "instance.offline", InstanceID: hello.InstanceID}, "")
 		}
 	}()
@@ -304,7 +304,7 @@ func (r *Registry) serveServer(p *protocol.Peer) {
 func (r *Registry) serveClient(p *protocol.Peer) {
 	clientID := ""
 	defer func() {
-		slog.Info("client断开", "client_id", clientID)
+		slog.Info("client disconnected", "client_id", clientID)
 		r.Lock()
 		delete(r.clients, p)
 		r.Unlock()
@@ -312,7 +312,7 @@ func (r *Registry) serveClient(p *protocol.Peer) {
 	}()
 	r.Lock()
 	r.clients[p] = ""
-	// 将初始实例快照与注册、离线变更串行化。
+	// Serialize the initial instance snapshot with registration and offline changes.
 	err := p.Write(protocol.Message{Version: 1, Type: "instances", Data: r.snapshotLocked()})
 	r.Unlock()
 	if err != nil {
@@ -339,7 +339,7 @@ func (r *Registry) serveClient(p *protocol.Peer) {
 				r.Unlock()
 			}
 			if m.ClientID != clientID {
-				_ = p.Write(protocol.Failure(m, "INVALID_REQUEST", errors.New("client_id 在同一连接上必须保持不变")))
+				_ = p.Write(protocol.Failure(m, "INVALID_REQUEST", errors.New("client_id must remain unchanged on the same connection")))
 				continue
 			}
 			r.routeRequest(p, m)
@@ -347,7 +347,7 @@ func (r *Registry) serveClient(p *protocol.Peer) {
 	}
 }
 
-// closeDataForInstance 关闭实例相关的待配对和活动数据连接，避免控制连接断开后状态残留。
+// closeDataForInstance closes pending and active data connections for an instance so state does not linger after the control connection closes.
 func (r *Registry) closeDataForInstance(instanceID string) {
 	r.dataMu.Lock()
 	defer r.dataMu.Unlock()
@@ -358,7 +358,7 @@ func (r *Registry) closeDataForInstance(instanceID string) {
 		pending.timer.Stop()
 		_ = pending.conn.Close()
 		delete(r.dataWait, pairID)
-		slog.Info("清理等待数据连接", "instance_id", pending.h.InstanceID, "client_id", pending.h.ClientID, "transfer_id", pending.h.TransferID, "pair_id", pending.h.PairID, "chunk_index", pending.h.ChunkIndex)
+		slog.Info("cleaned up pending data connection", "instance_id", pending.h.InstanceID, "client_id", pending.h.ClientID, "transfer_id", pending.h.TransferID, "pair_id", pending.h.PairID, "chunk_index", pending.h.ChunkIndex)
 	}
 	for conn, h := range r.dataActive {
 		if h.InstanceID != instanceID {
@@ -366,7 +366,7 @@ func (r *Registry) closeDataForInstance(instanceID string) {
 		}
 		_ = conn.Close()
 		delete(r.dataActive, conn)
-		slog.Info("清理活动数据连接", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
+		slog.Info("cleaned up active data connection", "instance_id", h.InstanceID, "client_id", h.ClientID, "transfer_id", h.TransferID, "pair_id", h.PairID, "chunk_index", h.ChunkIndex)
 	}
 }
 
@@ -382,7 +382,7 @@ func (r *Registry) routeRequest(p *protocol.Peer, m protocol.Message) {
 	s := r.instances[m.InstanceID]
 	r.RUnlock()
 	if s == nil {
-		_ = p.Write(protocol.Failure(m, "INSTANCE_OFFLINE", errors.New("实例不在线")))
+		_ = p.Write(protocol.Failure(m, "INSTANCE_OFFLINE", errors.New("instance is offline")))
 		return
 	}
 	if err := s.Peer.Write(m); err != nil {

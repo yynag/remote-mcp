@@ -1,4 +1,4 @@
 # remote-mcp
 
-1. 代码注释使用中文。
-2. mcp工具提示词必须使用英文且符合提示词经济性。
+1. Use English for code comments, log messages, error messages, and test failure messages.
+2. MCP tool prompts must be in English and follow prompt economy.

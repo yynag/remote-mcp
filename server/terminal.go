@@ -2,30 +2,30 @@ package main
 
 import "time"
 
-// 终端固定尺寸与会话生命周期常量。
+// Fixed terminal size and session lifecycle constants.
 const (
 	terminalCols = 120
 	terminalRows = 40
 
-	// sessionIdleTimeout 是会话无读写进展后的回收时间。
+	// sessionIdleTimeout is the idle reaping time after a session makes no read/write progress.
 	sessionIdleTimeout = 30 * time.Minute
-	// sessionRetention 是会话结束后输出缓存的保留时间。
+	// sessionRetention is the retention period for output buffers after a session ends.
 	sessionRetention = 10 * time.Minute
-	// maxSessions 是单个实例的并发会话上限。
+	// maxSessions is the concurrent session limit per instance.
 	maxSessions = 8
-	// defaultReadLimit 是单次读取的默认与最大字节数。
+	// defaultReadLimit is the default and maximum number of bytes per read.
 	defaultReadLimit = 64 * 1024
-	// maxWaitMS 是 session.read 的最长等待毫秒数。
+	// maxWaitMS is the maximum wait in milliseconds for session.read.
 	maxWaitMS = int64(30000)
 )
 
-// terminal 抽象一个可读写的伪终端。
-// Unix 使用 creack/pty，Windows 使用 ConPTY。
+// terminal abstracts a readable and writable pseudo-terminal.
+// Unix uses creack/pty; Windows uses ConPTY.
 type terminal interface {
 	Read([]byte) (int, error)
 	Write([]byte) (int, error)
 	Close() error
-	// Wait 阻塞到进程退出并返回退出码，只可调用一次。
+	// Wait blocks until the process exits and returns its exit code; it may be called only once.
 	Wait() (int, error)
 	Pid() int
 }

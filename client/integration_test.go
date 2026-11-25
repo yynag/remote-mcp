@@ -32,11 +32,11 @@ var (
 	buildDir     string
 )
 
-// TestRealMCPFileTransferDirectAndReverse 验证 stdio MCP 和真实直连/中继的文件传输与会话。
+// TestRealMCPFileTransferDirectAndReverse verifies file transfer and sessions over stdio MCP with real direct and relay connections.
 func TestRealMCPFileTransferDirectAndReverse(t *testing.T) {
 	buildBinaries(t)
 	for _, reverse := range []bool{false, true} {
-		t.Run(map[bool]string{false: "直连", true: "反向中继"}[reverse], func(t *testing.T) {
+		t.Run(map[bool]string{false: "direct", true: "reverse relay"}[reverse], func(t *testing.T) {
 			runRealTransfer(t, reverse)
 		})
 	}
@@ -56,7 +56,7 @@ func buildBinaries(t *testing.T) {
 			buildErr = err
 			return
 		}
-		// 二进制只在本次测试中使用，测试结束后删除临时目录。
+		// The binaries are used only by this test; the temporary directory is removed when the test finishes.
 		serverBin = filepath.Join(dir, "server")
 		clientBin = filepath.Join(dir, "client")
 		transportBin = filepath.Join(dir, "transport")
@@ -75,7 +75,7 @@ func buildBinaries(t *testing.T) {
 			output, err := cmd.CombinedOutput()
 			cancel()
 			if err != nil {
-				buildErr = fmt.Errorf("构建 %s 失败：%w\n%s", item.pkg, err, output)
+				buildErr = fmt.Errorf("build %s failed: %w\n%s", item.pkg, err, output)
 				return
 			}
 		}
@@ -100,7 +100,7 @@ func runRealTransfer(t *testing.T, reverse bool) {
 	transportPort := freePort(t)
 	instanceID := "integration-" + strconv.Itoa(serverPort)
 	guidePath := filepath.Join(dir, "guide.md")
-	if err := os.WriteFile(guidePath, []byte("# 集成测试\n"), 0600); err != nil {
+	if err := os.WriteFile(guidePath, []byte("# integration test\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	config := map[string]any{
@@ -183,28 +183,28 @@ func runRealTransfer(t *testing.T, reverse bool) {
 			for _, item := range list {
 				if value, ok := item.(map[string]any); ok && value["instance_id"] == instanceID && value["online"] == true {
 					if _, containsGuide := value["guide"]; containsGuide {
-						t.Fatal("instance_list 不应包含指南正文")
+						t.Fatal("instance_list must not include the guide body")
 					}
 					goto instanceReady
 				}
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("实例未上线")
+			t.Fatal("instance did not come online")
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
 instanceReady:
 	guide := callTool(t, mcp, "instance_get", map[string]any{"instance_id": instanceID})
-	if !strings.Contains(guide["guide"].(string), "集成测试") {
-		t.Fatalf("实例指南未通过 MCP 返回：%v", guide)
+	if !strings.Contains(guide["guide"].(string), "integration test") {
+		t.Fatalf("instance guide was not returned through MCP: %v", guide)
 	}
 	command := callTool(t, mcp, "exec_run", map[string]any{
 		"instance_id": instanceID, "command": "printf 'mcp-stdio-exec'",
 	})
 	if command["stdout"] != "mcp-stdio-exec" {
-		t.Fatalf("exec_run 输出异常：%v", command)
+		t.Fatalf("unexpected exec_run output: %v", command)
 	}
 
 	source := filepath.Join(dir, "source.bin")
@@ -219,15 +219,15 @@ instanceReady:
 	})
 	wantHash := fileHash(t, source)
 	if stat["sha256"] != wantHash {
-		t.Fatalf("远端 SHA-256 = %v，期望 %s", stat["sha256"], wantHash)
+		t.Fatalf("remote SHA-256 = %v, want %s", stat["sha256"], wantHash)
 	}
 	callTool(t, mcp, "file_download", map[string]any{
 		"instance_id": instanceID, "local_path": download, "remote_path": remote,
 	})
 	if got := fileHash(t, download); got != wantHash {
-		t.Fatalf("下载文件 SHA-256 = %s，期望 %s", got, wantHash)
+		t.Fatalf("downloaded file SHA-256 = %s, want %s", got, wantHash)
 	}
-	t.Run("会话", func(t *testing.T) {
+	t.Run("session", func(t *testing.T) {
 		runRealSession(t, mcp, instanceID)
 	})
 }
@@ -235,14 +235,14 @@ instanceReady:
 func runRealSession(t *testing.T, mcp *mcpStream, instanceID string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("此会话场景需要 Unix sh")
+		t.Skip("this session scenario requires Unix sh")
 	}
 	created := callTool(t, mcp, "session_create", map[string]any{
 		"instance_id": instanceID, "command": "sh",
 	})
 	sessionID, ok := created["session_id"].(string)
 	if !ok || sessionID == "" {
-		t.Fatalf("session_create 未返回会话 ID：%v", created)
+		t.Fatalf("session_create did not return a session ID: %v", created)
 	}
 	const marker = "session-e2e"
 	const input = "echo " + marker + "\n"
@@ -250,7 +250,7 @@ func runRealSession(t *testing.T, mcp *mcpStream, instanceID string) {
 		"instance_id": instanceID, "session_id": sessionID, "input": input,
 	})
 	if written["bytes_written"] != float64(len(input)) {
-		t.Fatalf("session_write 写入字节数异常：%v", written)
+		t.Fatalf("unexpected session_write byte count: %v", written)
 	}
 
 	read := func(offset float64, waitMS int) (string, float64) {
@@ -260,7 +260,7 @@ func runRealSession(t *testing.T, mcp *mcpStream, instanceID string) {
 		page, outputOK := result["output"].(string)
 		next, offsetOK := result["next_offset"].(float64)
 		if !outputOK || !offsetOK || next != offset+float64(len(page)) || result["truncated"] != false {
-			t.Fatalf("session_read 从偏移 %v 读取的响应异常：%v", offset, result)
+			t.Fatalf("unexpected session_read response from offset %v: %v", offset, result)
 		}
 		return page, next
 	}
@@ -268,7 +268,7 @@ func runRealSession(t *testing.T, mcp *mcpStream, instanceID string) {
 	var offset float64
 	waitMS := 2000
 	deadline := time.Now().Add(3 * time.Second)
-	// 提示符、输入回显和命令输出可能分块到达；只把独占一行的标记视为命令输出。
+	// Prompt, input echo, and command output may arrive in chunks; treat only the marker on its own line as command output.
 	for {
 		page, next := read(offset, waitMS)
 		output.WriteString(page)
@@ -277,31 +277,31 @@ func runRealSession(t *testing.T, mcp *mcpStream, instanceID string) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("session_read 未读到命令输出 %q，已读 %q", marker, output.String())
+			t.Fatalf("session_read did not find command output %q; read %q", marker, output.String())
 		}
 		waitMS = 500
 	}
 	if offset <= 0 {
-		t.Fatalf("session_read next_offset = %v，期望大于 0", offset)
+		t.Fatalf("session_read next_offset = %v, want greater than 0", offset)
 	}
 	if page, _ := read(offset, 100); strings.Contains(page, marker) {
-		t.Fatalf("session_read 从偏移 %v 续读仍返回旧内容：%q", offset, page)
+		t.Fatalf("session_read from offset %v still returned old content: %q", offset, page)
 	}
 
 	listed := callTool(t, mcp, "session_list", map[string]any{"instance_id": instanceID})
 	sessions, ok := listed["sessions"].([]any)
 	if !ok || len(sessions) != 1 {
-		t.Fatalf("session_list 返回的会话列表异常：%v", listed)
+		t.Fatalf("unexpected session_list response: %v", listed)
 	}
 	session, ok := sessions[0].(map[string]any)
 	if !ok || session["session_id"] != sessionID || session["running"] != true {
-		t.Fatalf("session_list 未找到运行中的会话 %q：%v", sessionID, listed)
+		t.Fatalf("session_list did not find running session %q: %v", sessionID, listed)
 	}
 	closed := callTool(t, mcp, "session_close", map[string]any{
 		"instance_id": instanceID, "session_id": sessionID,
 	})
 	if closed["closed"] != true || closed["cleanup_incomplete"] != false {
-		t.Fatalf("session_close 关闭或清理异常：%v", closed)
+		t.Fatalf("unexpected session_close result: %v", closed)
 	}
 }
 
@@ -336,11 +336,11 @@ func (m *mcpStream) call(method string, params any) (map[string]any, error) {
 			continue
 		}
 		if response["error"] != nil {
-			return nil, fmt.Errorf("MCP %s 返回错误：%v", method, response["error"])
+			return nil, fmt.Errorf("MCP %s returned error: %v", method, response["error"])
 		}
 		result, ok := response["result"].(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("MCP %s 响应缺少 result 字段", method)
+			return nil, fmt.Errorf("MCP %s response is missing result field", method)
 		}
 		return result, nil
 	}
@@ -364,7 +364,7 @@ func callTool(t *testing.T, mcp *mcpStream, name string, arguments map[string]an
 	value := callToolValue(t, mcp, name, arguments)
 	result, ok := value.(map[string]any)
 	if !ok {
-		t.Fatalf("工具 %s 返回了非对象：%#v", name, value)
+		t.Fatalf("tool %s returned a non-object: %#v", name, value)
 	}
 	return result
 }
@@ -377,19 +377,19 @@ func callToolValue(t *testing.T, mcp *mcpStream, name string, arguments map[stri
 	}
 	content, ok := result["content"].([]any)
 	if !ok || len(content) != 1 {
-		t.Fatalf("工具 %s 返回了异常内容：%#v", name, result)
+		t.Fatalf("tool %s returned unexpected content: %#v", name, result)
 	}
 	text, ok := content[0].(map[string]any)["text"].(string)
 	if !ok {
-		t.Fatalf("工具 %s 没有文本结果：%#v", name, result)
+		t.Fatalf("tool %s has no text result: %#v", name, result)
 	}
 	var value any
 	if err = json.Unmarshal([]byte(text), &value); err != nil {
-		t.Fatalf("工具 %s 返回非 JSON：%v；原文：%s", name, err, text)
+		t.Fatalf("tool %s returned non-JSON: %v; raw text: %s", name, err, text)
 	}
 	if object, ok := value.(map[string]any); ok {
 		if errorValue, exists := object["error"]; exists {
-			t.Fatalf("工具 %s 远端错误：%v", name, errorValue)
+			t.Fatalf("tool %s remote error: %v", name, errorValue)
 		}
 	}
 	return value
@@ -399,7 +399,7 @@ func assertToolSchema(t *testing.T, result map[string]any) {
 	t.Helper()
 	tools, ok := result["tools"].([]any)
 	if !ok || len(tools) != 19 {
-		t.Fatalf("tools/list 返回 %d 个工具，期望 19", len(tools))
+		t.Fatalf("tools/list returned %d tools, want 19", len(tools))
 	}
 	seen := make(map[string]bool)
 	for _, raw := range tools {
@@ -407,7 +407,7 @@ func assertToolSchema(t *testing.T, result map[string]any) {
 		name := tool["name"].(string)
 		seen[name] = true
 		if _, ok = tool["inputSchema"].(map[string]any); !ok {
-			t.Fatalf("工具 %s 缺少 inputSchema", name)
+			t.Fatalf("tool %s is missing inputSchema", name)
 		}
 	}
 	for _, name := range []string{
@@ -415,7 +415,7 @@ func assertToolSchema(t *testing.T, result map[string]any) {
 		"session_create", "session_write", "session_read", "session_close", "session_list",
 	} {
 		if !seen[name] {
-			t.Fatalf("tools/list 缺少 %s", name)
+			t.Fatalf("tools/list is missing %s", name)
 		}
 	}
 }
@@ -472,7 +472,7 @@ func waitTCP(t *testing.T, port int) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("端口 %d 未在限定时间内监听", port)
+	t.Fatalf("port %d did not start listening in time", port)
 }
 
 func stopProcess(command *exec.Cmd) {

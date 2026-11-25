@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// TestLoadConfigRejectsUnknownFields 检查配置字段白名单和相对指南路径。
+// TestLoadConfigRejectsUnknownFields checks the configuration field allowlist and relative guide path.
 func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 	directory := t.TempDir()
 	guide := filepath.Join(directory, "guide.md")
-	if err := os.WriteFile(guide, []byte("指南内容"), 0600); err != nil {
+	if err := os.WriteFile(guide, []byte("guide content"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	config := filepath.Join(directory, "server.yaml")
@@ -20,24 +20,24 @@ func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, text, err := LoadConfig(config)
-	if err != nil || loaded.InstanceID != "test" || text != "指南内容" {
-		t.Fatalf("配置读取异常：%+v，指南：%q，错误：%v", loaded, text, err)
+	if err != nil || loaded.InstanceID != "test" || text != "guide content" {
+		t.Fatalf("unexpected config load: %+v, guide: %q, error: %v", loaded, text, err)
 	}
 	if err := os.WriteFile(config, []byte("instance_id: test\nguide: guide.md\nlisten: 127.0.0.1:9000\nunexpected: true\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = LoadConfig(config); err == nil {
-		t.Fatal("未知配置字段未被拒绝")
+		t.Fatal("unknown configuration field was not rejected")
 	}
 	if err := os.WriteFile(config, []byte("instance_id: test\nguide: guide.md\nlisten: 127.0.0.1:9000\n---\ninstance_id: second\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = LoadConfig(config); err == nil {
-		t.Fatal("多个 YAML 文档未被拒绝")
+		t.Fatal("multiple YAML documents were not rejected")
 	}
 }
 
-// TestLoadConfigRejectsInvalidGateway 拒绝无效的中继地址。
+// TestLoadConfigRejectsInvalidGateway rejects invalid relay addresses.
 func TestLoadConfigRejectsInvalidGateway(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "guide.md"), []byte("guide"), 0600); err != nil {
@@ -49,7 +49,7 @@ func TestLoadConfigRejectsInvalidGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := LoadConfig(config); err == nil {
-		t.Fatal("无效 gateway 未被拒绝")
+		t.Fatal("invalid gateway was not rejected")
 	}
 }
 
@@ -90,12 +90,12 @@ func TestLoadConfigEndpoints(t *testing.T) {
 			got, text, err := LoadConfig(config)
 			if tt.errorField != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.errorField) {
-					t.Fatalf("期望 %s 错误，实际为 %v", tt.errorField, err)
+					t.Fatalf("expected %s error, got %v", tt.errorField, err)
 				}
 				return
 			}
 			if err != nil || got.Listen != tt.wantListen || got.Gateway != tt.wantGateway || text != "guide" {
-				t.Fatalf("LoadConfig 返回 %+v、%q、%v", got, text, err)
+				t.Fatalf("LoadConfig returned %+v, %q, %v", got, text, err)
 			}
 		})
 	}

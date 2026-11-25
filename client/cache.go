@@ -51,7 +51,7 @@ type cachedJob struct {
 	gap         bool
 }
 
-// JobCache 缓存服务端推送的任务增量输出。
+// JobCache caches incremental job output pushed by the server.
 type JobCache struct {
 	mu   sync.Mutex
 	jobs map[string]*cachedJob

@@ -1,4 +1,4 @@
-// Package protocol 定义 Remote MCP 的控制通道和文件传输消息。
+// Package protocol defines control channel and file transfer messages for Remote MCP.
 package protocol
 
 import (
@@ -7,26 +7,26 @@ import (
 )
 
 const (
-	// Version 是当前控制协议版本。
+	// Version is the current control protocol version.
 	Version = 1
-	// DefaultChunkSize 是文件传输固定使用的分块大小。
+	// DefaultChunkSize is the fixed chunk size used for file transfers.
 	DefaultChunkSize = 5 * 1024 * 1024
-	// DefaultConcurrency 是文件传输固定使用的并行数。
+	// DefaultConcurrency is the fixed concurrency used for file transfers.
 	DefaultConcurrency = 4
-	// TransferRetentionMinutes 是中断传输的保留时间。
+	// TransferRetentionMinutes is the retention period for interrupted transfers.
 	TransferRetentionMinutes = 30
-	// MaxDataFrame 是单个数据 WebSocket 帧的最大大小。
+	// MaxDataFrame is the maximum size of a single data WebSocket frame.
 	MaxDataFrame = 256 * 1024
 )
 
-// Hello 是 server 发送的实例标识。指南正文通过 instance.get 按需获取。
+// Hello is the instance identity sent by the server. The guide body is fetched on demand through instance.get.
 type Hello struct {
 	Type       string `json:"type"`
 	InstanceID string `json:"instance_id"`
 	Guide      string `json:"guide,omitempty"`
 }
 
-// Message 是控制 WebSocket 上传输的 JSON 消息。
+// Message is a JSON message transported over the control WebSocket.
 type Message struct {
 	Version    int             `json:"version,omitempty"`
 	Type       string          `json:"type"`
@@ -41,35 +41,35 @@ type Message struct {
 	Data       any             `json:"data,omitempty"`
 }
 
-// Error 是控制协议响应中的远端错误。
+// Error is a remote error in a control protocol response.
 type Error struct {
 	Code    string         `json:"code"`
 	Message string         `json:"message"`
 	Data    map[string]any `json:"data,omitempty"`
 }
 
-// Error 返回可读的错误码和错误信息。
+// Error returns the readable error code and message.
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
 
-// Failure 根据请求生成失败响应。
+// Failure builds a failure response from a request.
 func Failure(req Message, code string, err error) Message {
 	return Message{Version: Version, Type: "response", ClientID: req.ClientID, RequestID: req.RequestID, InstanceID: req.InstanceID, Error: &Error{Code: code, Message: err.Error()}}
 }
 
-// Success 根据请求生成成功响应。
+// Success builds a success response from a request.
 func Success(req Message, result any) Message {
 	return Message{Version: Version, Type: "response", ClientID: req.ClientID, RequestID: req.RequestID, InstanceID: req.InstanceID, Result: result}
 }
 
-// ValidateRequest 检查请求是否包含协议要求的字段。
+// ValidateRequest checks that a request contains the fields required by the protocol.
 func (m Message) ValidateRequest() error {
 	if m.Type != "request" || m.Version != Version || m.ClientID == "" || m.RequestID == "" || m.InstanceID == "" || m.Method == "" {
-		return fmt.Errorf("请求需要 version=1、client_id、request_id、instance_id 和 method")
+		return fmt.Errorf("request requires version=1, client_id, request_id, instance_id, and method")
 	}
 	return nil
 }
 
-// DataHandshake 是文件分块数据 WebSocket 的握手消息。
+// DataHandshake is the handshake message for a file chunk data WebSocket.
 type DataHandshake struct {
 	Type       string `json:"type"`
 	InstanceID string `json:"instance_id"`

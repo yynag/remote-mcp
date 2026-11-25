@@ -26,7 +26,7 @@ func (p *processGroup) waitRoot() bool { return false }
 
 func (p *processGroup) close() error { return nil }
 
-// 同时终止进程组，否则子进程会继续占用标准输出管道。
+// Terminate the process group as well; otherwise child processes keep holding the standard output pipes.
 func (p *processGroup) terminate(force bool) error {
 	sig := syscall.SIGTERM
 	if force {

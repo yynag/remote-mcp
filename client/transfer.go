@@ -55,11 +55,11 @@ type transferSession struct {
 
 func (b *Bridge) transfer(ctx context.Context, args transferArgs, direction string) (any, error) {
 	if args.InstanceID == "" || args.LocalPath == "" || args.RemotePath == "" {
-		return nil, errors.New("instance_id、local_path 和 remote_path 不能为空")
+		return nil, errors.New("instance_id, local_path, and remote_path must not be empty")
 	}
 	if direction == "download" && !args.Overwrite {
 		if _, err := os.Lstat(args.LocalPath); err == nil {
-			return nil, errors.New("TARGET_EXISTS: 本地目标文件已存在")
+			return nil, errors.New("TARGET_EXISTS: local target file already exists")
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
@@ -102,7 +102,7 @@ func (b *Bridge) transfer(ctx context.Context, args transferArgs, direction stri
 			return nil, err
 		}
 		if !sourceInfo.Mode().IsRegular() {
-			return nil, errors.New("上传源必须是普通文件")
+			return nil, errors.New("upload source must be a regular file")
 		}
 		sourceHash, chunks, err = hashManifest(args.LocalPath, sourceInfo.Size())
 		if err != nil {
@@ -110,7 +110,7 @@ func (b *Bridge) transfer(ctx context.Context, args transferArgs, direction stri
 		}
 		current, statErr := os.Stat(args.LocalPath)
 		if statErr != nil || !os.SameFile(sourceInfo, current) || sourceInfo.Size() != current.Size() || !sourceInfo.ModTime().Equal(current.ModTime()) {
-			return nil, errors.New("SOURCE_CHANGED: 上传源文件在计算校验值时发生变化")
+			return nil, errors.New("SOURCE_CHANGED: upload source changed while computing checksum")
 		}
 	}
 	prepare := protocol.TransferSpec{
@@ -174,7 +174,7 @@ func (b *Bridge) transfer(ctx context.Context, args transferArgs, direction stri
 		}
 		info, statErr := sourceFile.Stat()
 		if statErr != nil || info.Size() != status.Size {
-			return nil, errors.New("断点文件大小与远端传输状态不一致")
+			return nil, errors.New("partial file size does not match remote transfer status")
 		}
 		for index := range completed {
 			if !verifyChunk(sourceFile, status, index) {
@@ -322,7 +322,7 @@ func (b *Bridge) transferChunk(ctx context.Context, instanceID string, status tr
 		if ready.Error != "" {
 			return errors.New(ready.Error)
 		}
-		return errors.New("数据连接未就绪")
+		return errors.New("data connection is not ready")
 	}
 	if direction == "upload" {
 		buffer := make([]byte, dataFrameSize)
@@ -352,7 +352,7 @@ func (b *Bridge) transferChunk(ctx context.Context, instanceID string, status tr
 				return readErr
 			}
 			if kind != websocket.BinaryMessage || len(data) == 0 || len(data) > dataFrameSize || int64(len(data)) > length-position {
-				return errors.New("无效的数据分块")
+				return errors.New("invalid data chunk")
 			}
 			written, writeErr := file.WriteAt(data, offset+position)
 			if writeErr != nil {
@@ -365,7 +365,7 @@ func (b *Bridge) transferChunk(ctx context.Context, instanceID string, status tr
 			position += int64(len(data))
 		}
 		if hex.EncodeToString(chunkHash.Sum(nil)) != hash {
-			return errors.New("SHA256_MISMATCH: 分块校验失败")
+			return errors.New("SHA256_MISMATCH: chunk checksum failed")
 		}
 		if err = ws.WriteJSON(map[string]any{"type": "data.ack", "sha256": hash}); err != nil {
 			return err
@@ -383,7 +383,7 @@ func (b *Bridge) transferChunk(ctx context.Context, instanceID string, status tr
 		if done.Error != "" {
 			return errors.New(done.Error)
 		}
-		return errors.New("数据分块未完成")
+		return errors.New("data chunk did not complete")
 	}
 	return nil
 }
@@ -415,7 +415,7 @@ func verifyFile(path, expected string, size int64) error {
 		return err
 	}
 	if actual != expected {
-		return errors.New("SHA256_MISMATCH: 文件在传输期间发生变化")
+		return errors.New("SHA256_MISMATCH: file changed during transfer")
 	}
 	return nil
 }
@@ -439,7 +439,7 @@ func verifyOpenFile(file *os.File, expected string, size int64) error {
 		return err
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != expected {
-		return errors.New("SHA256_MISMATCH: 文件校验失败")
+		return errors.New("SHA256_MISMATCH: file checksum failed")
 	}
 	return nil
 }
@@ -459,11 +459,11 @@ func decodeStatus(value any) (transferStatus, error) {
 func validateStatus(status transferStatus) error {
 	count := int((status.Size + defaultChunkSize - 1) / defaultChunkSize)
 	if status.State != "active" || status.Size < 0 || status.ChunkSize != defaultChunkSize || status.Concurrency != defaultConcurrency || len(status.ChunkSHA256) != count {
-		return errors.New("INVALID_TRANSFER_STATUS: 传输状态无效")
+		return errors.New("INVALID_TRANSFER_STATUS: invalid transfer status")
 	}
 	for _, index := range status.CompletedChunks {
 		if index < 0 || index >= count {
-			return errors.New("INVALID_TRANSFER_STATUS: 传输状态无效")
+			return errors.New("INVALID_TRANSFER_STATUS: invalid transfer status")
 		}
 	}
 	return nil

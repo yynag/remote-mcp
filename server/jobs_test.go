@@ -8,7 +8,7 @@ import (
 	"remote-mcp/internal/protocol"
 )
 
-// TestExecAndJobOutputOffsets 检查命令输出和增量任务输出偏移。
+// TestExecAndJobOutputOffsets checks command output and incremental job output offsets.
 func TestExecAndJobOutputOffsets(t *testing.T) {
 	e := NewEngine("test", "guide")
 	defer e.Close()
@@ -20,7 +20,7 @@ func TestExecAndJobOutputOffsets(t *testing.T) {
 	}
 	got := result.Result.(map[string]any)
 	if got["stdout"] != "alpha" || got["stderr"] != "beta" {
-		t.Fatalf("输出不符合预期：%#v", got)
+		t.Fatalf("unexpected output: %#v", got)
 	}
 
 	params, _ = json.Marshal(commandParams{Command: "printf 'one'; sleep 1; printf 'two'"})
@@ -38,16 +38,16 @@ func TestExecAndJobOutputOffsets(t *testing.T) {
 	select {
 	case <-job.done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("任务未结束")
+		t.Fatal("job did not finish")
 	}
 	b, offset, end := job.stdout.Read(2)
 	if string(b) != "etwo" || offset != 2 || end != 6 {
-		t.Fatalf("偏移读取 = %q [%d,%d)", b, offset, end)
+		t.Fatalf("offset read = %q [%d,%d)", b, offset, end)
 	}
 }
 
 func TestInstanceGuideIsReturnedOnlyOnDemand(t *testing.T) {
-	e := NewEngine("win11prow", "Windows 平台指南正文")
+	e := NewEngine("win11prow", "Windows platform guide body")
 	defer e.Close()
 
 	list := e.Handle(protocol.Message{Version: 1, Type: "request", ClientID: "c", RequestID: "list", InstanceID: "win11prow", Method: "instance.list"})
@@ -59,14 +59,14 @@ func TestInstanceGuideIsReturnedOnlyOnDemand(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(encoded) != `{"instances":[{"type":"hello","instance_id":"win11prow"}]}` {
-		t.Fatalf("实例列表包含多余字段或指南：%s", encoded)
+		t.Fatalf("instance list contains extra fields or the guide: %s", encoded)
 	}
 
 	guide := e.Handle(protocol.Message{Version: 1, Type: "request", ClientID: "c", RequestID: "guide", InstanceID: "win11prow", Method: "instance.get"})
 	if guide.Error != nil {
 		t.Fatal(guide.Error)
 	}
-	if got := guide.Result.(protocol.Hello).Guide; got != "Windows 平台指南正文" {
-		t.Fatalf("按需读取的指南不匹配：%q", got)
+	if got := guide.Result.(protocol.Hello).Guide; got != "Windows platform guide body" {
+		t.Fatalf("on-demand guide does not match: %q", got)
 	}
 }

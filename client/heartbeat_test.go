@@ -12,8 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestBridgeRemainsConnectedWithFrequentApplicationHeartbeats 验证真实 WebSocket
-// 连接在持续收到应用层心跳时，超过 45 秒读取期限后仍保持连接。
+// TestBridgeRemainsConnectedWithFrequentApplicationHeartbeats verifies that a real WebSocket
+// connection remains connected past the 45-second read deadline while application heartbeats keep arriving.
 func TestBridgeRemainsConnectedWithFrequentApplicationHeartbeats(t *testing.T) {
 	timeout := 65 * time.Second
 	testCtx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -50,19 +50,19 @@ func TestBridgeRemainsConnectedWithFrequentApplicationHeartbeats(t *testing.T) {
 	bridge := NewBridge(Options{URLs: []string{"ws" + strings.TrimPrefix(server.URL, "http")}})
 	defer bridge.Close()
 	if err := bridge.Start(testCtx); err != nil {
-		t.Fatalf("启动 Bridge：%v", err)
+		t.Fatalf("start Bridge: %v", err)
 	}
 
 	select {
 	case <-time.After(51 * time.Second):
 	case <-testCtx.Done():
-		t.Fatalf("心跳存活测试超时（限定 %s）：%v", timeout, testCtx.Err())
+		t.Fatalf("heartbeat liveness test timed out (limit %s): %v", timeout, testCtx.Err())
 	}
 	if got := connections.Load(); got != 1 {
-		t.Fatalf("WebSocket 被重连，服务端接受连接数=%d，期望 1", got)
+		t.Fatalf("WebSocket reconnected; server accepted connections=%d, want 1", got)
 	}
 	instances := bridge.List()
 	if len(instances) != 1 || instances[0]["instance_id"] != "heartbeat-test" || instances[0]["online"] != true {
-		t.Fatalf("心跳后实例不在线：%v", instances)
+		t.Fatalf("instance is offline after heartbeats: %v", instances)
 	}
 }

@@ -34,9 +34,9 @@ type sessionReadParams struct {
 
 type incompleteTerminalCleanup struct{}
 
-func (incompleteTerminalCleanup) Error() string { return "会话进程清理不完整" }
+func (incompleteTerminalCleanup) Error() string { return "incomplete session process cleanup" }
 
-// Session 保存终端、输出尾部和独立于写入锁的生命周期状态。
+// Session holds the terminal, output tail, and lifecycle state independent of the write lock.
 type Session struct {
 	id, instance, command, cwd string
 	term                       terminal
@@ -54,7 +54,7 @@ type Session struct {
 	closeReason string
 }
 
-// SessionManager 管理单个实例的会话配额和回收。
+// SessionManager manages session quota and reaping for a single instance.
 type SessionManager struct {
 	instance    string
 	limit       int
@@ -77,12 +77,12 @@ func newSessionManager(instance string) *SessionManager {
 
 func (m *SessionManager) create(p sessionCreateParams) (*Session, error) {
 	if p.Command == "" {
-		return nil, errors.New("命令不能为空")
+		return nil, errors.New("command must not be empty")
 	}
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil, errors.New("会话管理器已关闭")
+		return nil, errors.New("session manager is closed")
 	}
 	if len(m.sessions)+m.starting >= m.limit {
 		var oldestID string
@@ -101,7 +101,7 @@ func (m *SessionManager) create(p sessionCreateParams) (*Session, error) {
 	}
 	if len(m.sessions)+m.starting >= m.limit {
 		m.mu.Unlock()
-		return nil, &protocol.Error{Code: "SESSION_LIMIT", Message: "已达到会话数量上限"}
+		return nil, &protocol.Error{Code: "SESSION_LIMIT", Message: "session limit reached"}
 	}
 	m.starting++
 	m.starts.Add(1)
@@ -115,8 +115,8 @@ func (m *SessionManager) create(p sessionCreateParams) (*Session, error) {
 	m.starting--
 	if err != nil {
 		m.mu.Unlock()
-		slog.Warn("[会话启动失败]", "instance", m.instance, "session", id, "reason", "terminal_start", "duration", now.Sub(start).Round(time.Millisecond))
-		return nil, errors.New("终端启动失败，请检查命令、参数和工作目录")
+		slog.Warn("[session start failed]", "instance", m.instance, "session", id, "reason", "terminal_start", "duration", now.Sub(start).Round(time.Millisecond))
+		return nil, errors.New("terminal start failed; check the command, arguments, and working directory")
 	}
 	s := &Session{
 		id: id, instance: m.instance, command: p.Command, cwd: p.Cwd, term: term,
@@ -124,7 +124,7 @@ func (m *SessionManager) create(p sessionCreateParams) (*Session, error) {
 	}
 	m.sessions[id] = s
 	m.mu.Unlock()
-	slog.Info("[会话已启动]", "instance", m.instance, "session", id, "duration", now.Sub(start).Round(time.Millisecond))
+	slog.Info("[session started]", "instance", m.instance, "session", id, "duration", now.Sub(start).Round(time.Millisecond))
 	go s.readOutput()
 	return s, nil
 }
@@ -134,7 +134,7 @@ func (m *SessionManager) get(id string) (*Session, error) {
 	s := m.sessions[id]
 	m.mu.Unlock()
 	if s == nil {
-		return nil, &protocol.Error{Code: "SESSION_NOT_FOUND", Message: "未找到会话"}
+		return nil, &protocol.Error{Code: "SESSION_NOT_FOUND", Message: "session not found"}
 	}
 	return s, nil
 }
@@ -211,7 +211,7 @@ func (s *Session) notifyLocked() {
 	case s.notify <- struct{}{}:
 	default:
 	}
-	// 关闭当前通知通道，让同一轮等待中的所有读者重新检查状态。
+	// Close the current notification channel so all readers waiting in the same round recheck state.
 	close(s.notify)
 	s.notify = nil
 }
@@ -243,7 +243,7 @@ func (s *Session) readOutput() {
 			reason = "wait_failed"
 		}
 	}
-	slog.Info("[会话结束]", "instance", s.instance, "session", s.id, "reason", reason, "duration", duration, "exit_code", code)
+	slog.Info("[session ended]", "instance", s.instance, "session", s.id, "reason", reason, "duration", duration, "exit_code", code)
 }
 
 func (s *Session) beginClose(reason string, idleBefore time.Time) bool {
@@ -262,7 +262,7 @@ func (s *Session) closeTerminal() error {
 		start := time.Now()
 		s.closeErr = s.term.Close()
 		if s.closeErr != nil {
-			slog.Warn("[会话清理不完整]", "instance", s.instance, "session", s.id, "reason", "terminal_cleanup", "duration", time.Since(start).Round(time.Millisecond), "code", "SESSION_CLEANUP_INCOMPLETE")
+			slog.Warn("[session cleanup incomplete]", "instance", s.instance, "session", s.id, "reason", "terminal_cleanup", "duration", time.Since(start).Round(time.Millisecond), "code", "SESSION_CLEANUP_INCOMPLETE")
 		}
 	})
 	return s.closeErr
@@ -275,7 +275,7 @@ func (s *Session) write(input string) (int, error) {
 	running := s.runningLocked()
 	s.mu.Unlock()
 	if !running {
-		return 0, sessionWriteError("SESSION_ENDED", "会话已结束或正在关闭", 0)
+		return 0, sessionWriteError("SESSION_ENDED", "session has ended or is closing", 0)
 	}
 	if input == "" {
 		return 0, nil
@@ -290,11 +290,11 @@ func (s *Session) write(input string) (int, error) {
 	if err != nil || n != len(input) {
 		switch {
 		case !running:
-			return n, sessionWriteError("SESSION_ENDED", "会话已结束或正在关闭", n)
+			return n, sessionWriteError("SESSION_ENDED", "session has ended or is closing", n)
 		case errors.Is(err, os.ErrDeadlineExceeded) || os.IsTimeout(err):
-			return n, sessionWriteError("SESSION_WRITE_TIMEOUT", "写入会话超时", n)
+			return n, sessionWriteError("SESSION_WRITE_TIMEOUT", "session write timed out", n)
 		default:
-			return n, sessionWriteError("REQUEST_FAILED", "写入会话失败", n)
+			return n, sessionWriteError("REQUEST_FAILED", "session write failed", n)
 		}
 	}
 	return n, nil
@@ -424,7 +424,7 @@ func stripSessionANSI(data []byte) []byte {
 }
 
 func (m *SessionManager) request(req protocol.Message) (any, error) {
-	invalid := errors.New("会话请求参数无效")
+	invalid := errors.New("invalid session request parameters")
 	switch req.Method {
 	case "session.create":
 		var p sessionCreateParams
@@ -443,7 +443,7 @@ func (m *SessionManager) request(req protocol.Message) (any, error) {
 		}
 		s, err := m.get(p.SessionID)
 		if err != nil {
-			return nil, sessionWriteError("SESSION_NOT_FOUND", "未找到会话", 0)
+			return nil, sessionWriteError("SESSION_NOT_FOUND", "session not found", 0)
 		}
 		n, err := s.write(p.Input)
 		if err != nil {
@@ -476,12 +476,12 @@ func (m *SessionManager) request(req protocol.Message) (any, error) {
 		result := map[string]any{"session_id": s.id, "closed": true, "cleanup_incomplete": err != nil}
 		var incomplete incompleteTerminalCleanup
 		if err != nil && !errors.As(err, &incomplete) {
-			return nil, &protocol.Error{Code: "SESSION_CLEANUP_INCOMPLETE", Message: "终端清理失败", Data: result}
+			return nil, &protocol.Error{Code: "SESSION_CLEANUP_INCOMPLETE", Message: "terminal cleanup failed", Data: result}
 		}
 		return result, nil
 	case "session.list":
 		return map[string]any{"sessions": m.list()}, nil
 	default:
-		return nil, &protocol.Error{Code: "METHOD_NOT_FOUND", Message: "未知会话方法"}
+		return nil, &protocol.Error{Code: "METHOD_NOT_FOUND", Message: "unknown session method"}
 	}
 }

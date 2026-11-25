@@ -26,7 +26,7 @@ func TestWindowsExecRunCapturesOutput(t *testing.T) {
 		Command: `[Console]::Out.Write('alpha'); [Console]::Error.Write('beta')`,
 	})
 	if result["state"] != "completed" || result["exit_code"] != 0 || result["stdout"] != "alpha" || result["stderr"] != "beta" {
-		t.Fatalf("exec.run 返回结果不符：%#v", result)
+		t.Fatalf("exec.run result mismatch: %#v", result)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestWindowsJobTerminatesChildHoldingOutput(t *testing.T) {
 			}
 			child := openWindowsJobTestChild(t, j)
 			if state, err := windows.WaitForSingleObject(child, 0); state != uint32(windows.WAIT_TIMEOUT) || err != nil {
-				t.Fatalf("ping 未在运行: state=%#x err=%v", state, err)
+				t.Fatalf("ping is not running: state=%#x err=%v", state, err)
 			}
 
 			params := map[string]string{"job_id": id}
@@ -65,14 +65,14 @@ func TestWindowsJobTerminatesChildHoldingOutput(t *testing.T) {
 			select {
 			case <-j.done:
 			case <-time.After(windowsJobTestTimeout):
-				t.Fatal("任务未退出，输出管道可能仍被子进程占用")
+				t.Fatal("job did not exit; the output pipe may still be held by a child process")
 			}
 			status := windowsJobRequest(t, e, "job.status", params)
 			if status["state"] != tc.state || status["exit_code"] != tc.exitCode {
-				t.Fatalf("任务状态 = %#v，预期 %s、退出码 %d", status, tc.state, tc.exitCode)
+				t.Fatalf("job status = %#v, want %s, exit code %d", status, tc.state, tc.exitCode)
 			}
 			if state, err := windows.WaitForSingleObject(child, 1000); state != windows.WAIT_OBJECT_0 || err != nil {
-				t.Fatalf("ping 未退出: state=%#x err=%v", state, err)
+				t.Fatalf("ping did not exit: state=%#x err=%v", state, err)
 			}
 		})
 	}
@@ -108,7 +108,7 @@ func openWindowsJobTestChild(t *testing.T, j *Job) windows.Handle {
 			}
 			child, err = windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_TERMINATE, false, uint32(pid))
 			if err != nil {
-				t.Fatalf("打开 ping 进程句柄: %v", err)
+				t.Fatalf("open ping process handle: %v", err)
 			}
 			t.Cleanup(func() {
 				if t.Failed() {
@@ -124,9 +124,9 @@ func openWindowsJobTestChild(t *testing.T, j *Job) windows.Handle {
 		select {
 		case <-ticker.C:
 		case <-j.done:
-			t.Fatalf("任务在启动 ping 前退出: %q", stderr)
+			t.Fatalf("job exited before starting ping: %q", stderr)
 		case <-timeout.C:
-			t.Fatalf("等待 ping PID 或输出超时: stdout=%q stderr=%q", stdout, stderr)
+			t.Fatalf("timed out waiting for ping PID or output: stdout=%q stderr=%q", stdout, stderr)
 		}
 	}
 }

@@ -22,7 +22,7 @@ func transportSocket(t *testing.T, url string) *websocket.Conn {
 	return c
 }
 
-// TestDataPairConsumesBothHellosAndChecksIdentity 检查中继配对和握手身份校验。
+// TestDataPairConsumesBothHellosAndChecksIdentity checks relay pairing and handshake identity validation.
 func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 	r := NewRegistry()
 	srv := httptest.NewServer(r.Handler())
@@ -37,7 +37,7 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if welcome.Type != "welcome" {
-		t.Fatalf("意外的 welcome 消息: %+v", welcome)
+		t.Fatalf("unexpected welcome message: %+v", welcome)
 	}
 	h := protocol.DataHandshake{Type: "data", Role: "client", PairID: "pair", InstanceID: "server", ClientID: "client",
 		TransferID: "transfer", ChunkIndex: 7, Direction: "upload", Offset: 7 * protocol.DefaultChunkSize, Length: 4, SHA256: "hash"}
@@ -50,7 +50,7 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if opened.Type != "data.open" || opened.ClientID != h.ClientID || opened.InstanceID != h.InstanceID {
-		t.Fatalf("错误的 data.open 消息: %+v", opened)
+		t.Fatalf("unexpected data.open message: %+v", opened)
 	}
 
 	bad := h
@@ -61,13 +61,13 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := wrong.ReadMessage(); err == nil {
-		t.Fatal("身份不匹配的分块连接被配对了")
+		t.Fatal("chunk connection with mismatched identity was paired")
 	}
 	r.dataMu.Lock()
 	waiting := len(r.dataWait)
 	r.dataMu.Unlock()
 	if waiting != 1 {
-		t.Fatal("身份不匹配的 server 连接抢走了待配对的 client")
+		t.Fatal("server connection with mismatched identity consumed the pending client")
 	}
 
 	server := transportSocket(t, base+"/data")
@@ -85,7 +85,7 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ready.Type != "data.ready" {
-		t.Fatalf("已消费的 hello 被转发了: %+v", ready)
+		t.Fatalf("consumed hello was forwarded: %+v", ready)
 	}
 	payload := []byte("file")
 	if err := dataClient.WriteMessage(websocket.BinaryMessage, payload); err != nil {
@@ -96,9 +96,9 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if kind != websocket.BinaryMessage || string(actual) != string(payload) {
-		t.Fatalf("二进制中继: kind=%d data=%q", kind, actual)
+		t.Fatalf("binary relay: kind=%d data=%q", kind, actual)
 	}
-	// 任意合法文本控制帧都应透明转发，传输层不解析业务类型。
+	// Any valid text control frame should be forwarded transparently; the transport does not parse business types.
 	textControl := []byte(`{"type":"custom.control","value":"opaque"}`)
 	if err := dataClient.WriteMessage(websocket.TextMessage, textControl); err != nil {
 		t.Fatal(err)
@@ -108,11 +108,11 @@ func TestDataPairConsumesBothHellosAndChecksIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if kind != websocket.TextMessage || string(actual) != string(textControl) {
-		t.Fatalf("文本中继: kind=%d data=%q", kind, actual)
+		t.Fatalf("text relay: kind=%d data=%q", kind, actual)
 	}
 }
 
-// TestDataShutdownClosesPendingPair 确认中继退出时会关闭等待配对的连接。
+// TestDataShutdownClosesPendingPair verifies that the relay closes connections waiting for pairing when it shuts down.
 func TestDataShutdownClosesPendingPair(t *testing.T) {
 	r := NewRegistry()
 	srv := httptest.NewServer(r.Handler())
@@ -136,12 +136,12 @@ func TestDataShutdownClosesPendingPair(t *testing.T) {
 	}
 	r.Close()
 	if _, _, err := client.ReadMessage(); err == nil {
-		t.Fatal("待配对的数据连接在中继关闭后仍然存活")
+		t.Fatal("pending data connection survived relay shutdown")
 	}
 	r.dataMu.Lock()
 	waiting := len(r.dataWait)
 	r.dataMu.Unlock()
 	if waiting != 0 {
-		t.Fatalf("关闭后仍残留 %d 个待配对连接", waiting)
+		t.Fatalf("still %d pending connections after close", waiting)
 	}
 }

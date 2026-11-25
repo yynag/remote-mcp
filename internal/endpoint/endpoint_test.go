@@ -35,7 +35,7 @@ func TestParseEndpoints(t *testing.T) {
 			for _, parse := range []func(string) (string, error){ParseDial, ParseListen} {
 				got, err := parse(tt.input)
 				if err != nil || got != tt.want {
-					t.Fatalf("parse(%q) = %q, %v；期望 %q", tt.input, got, err, tt.want)
+					t.Fatalf("parse(%q) = %q, %v; want %q", tt.input, got, err, tt.want)
 				}
 			}
 		})
@@ -55,10 +55,10 @@ func TestRejectInvalidEndpoints(t *testing.T) {
 		"::1:80", "2001:db8::1:80", "[2001:db8:::1]:80", "[::1]80", "[::1]:80:90",
 		"[[::1]]:80", "[localhost]:80", "[127.0.0.1]:80", "[]:80", "[v1.foo]:80",
 		"-host:80", "host-:80", "host..example:80", ".example:80", "example..:80", ".:80",
-		"_service.example:80", "中国.example:80", "*.example:80", "host!name:80",
+		"_service.example:80", "exämple.example:80", "*.example:80", "host!name:80",
 		strings.Repeat("a", 64) + ".example:80",
 		strings.Repeat("a.", 127) + "a:80",
-		// 拒绝旧式数字形式及格式错误的 IPv4，避免将其作为 DNS 解析。
+		// Reject legacy numeric forms and malformed IPv4 so they are not resolved as DNS.
 		"123:80", "2130706433:80", "127.1:80", "127.0.1:80", "127.0.0.999:80",
 		"256.0.0.1:80", "127.00.0.1:80", "0177.0.0.1:80", "127.0.0.1.:80",
 		"0x7f000001:80", "0X7F.0x0.0x0.0x1:80", "example.123:80",
@@ -66,7 +66,7 @@ func TestRejectInvalidEndpoints(t *testing.T) {
 		t.Run(input, func(t *testing.T) {
 			for _, parse := range []func(string) (string, error){ParseDial, ParseListen} {
 				if got, err := parse(input); err == nil {
-					t.Fatalf("不应接受 %q（解析结果 %q）", input, got)
+					t.Fatalf("must not accept %q (parsed as %q)", input, got)
 				}
 			}
 		})
@@ -75,15 +75,15 @@ func TestRejectInvalidEndpoints(t *testing.T) {
 
 func TestEmptyHostOnlyAllowedForListen(t *testing.T) {
 	if got, err := ParseListen(":00080"); err != nil || got != ":80" {
-		t.Fatalf("通配监听 = %q, %v", got, err)
+		t.Fatalf("wildcard listen = %q, %v", got, err)
 	}
 	if _, err := ParseDial(":80"); err == nil {
-		t.Fatal("空拨号主机名被接受了")
+		t.Fatal("empty dial host name was accepted")
 	}
 }
 
 func TestZoneErrorIsExplicit(t *testing.T) {
 	if _, err := ParseDial("[fe80::1%en0]:80"); err == nil || !strings.Contains(err.Error(), "zone") {
-		t.Fatalf("期望明确报告 zone 错误，实际得到 %v", err)
+		t.Fatalf("expected an explicit zone error, got %v", err)
 	}
 }

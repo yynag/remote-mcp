@@ -40,7 +40,7 @@ type unixTerminal struct {
 
 func newTerminal(command string, args []string, cwd string) (terminal, error) {
 	if command == "" {
-		return nil, errors.New("命令不能为空")
+		return nil, errors.New("command must not be empty")
 	}
 	cmd := exec.Command(command, args...)
 	cmd.Dir = cwd
@@ -61,7 +61,7 @@ func newTerminal(command string, args []string, cwd string) (terminal, error) {
 }
 
 func pollableTerminalFile(master *os.File) (*os.File, error) {
-	// 用非阻塞描述符重新注册 Go 的轮询器，确保截止时间和 Close 能打断 I/O。
+	// Re-register Go's poller with a non-blocking descriptor so deadlines and Close can interrupt I/O.
 	syscall.ForkLock.RLock()
 	fd, err := syscall.Dup(int(master.Fd()))
 	if err == nil {
@@ -102,7 +102,7 @@ func (t *unixTerminal) watchProcess(cmd *exec.Cmd) {
 	}
 	close(t.exited)
 
-	// 后台进程可能仍持有终端，不能等读到 EOF 才清理。
+	// Background processes may still hold the terminal, so cleanup must not wait for EOF.
 	_ = t.cleanup()
 	_ = t.file.SetReadDeadline(time.Now().Add(time.Second))
 }
@@ -181,7 +181,7 @@ func visitTerminalProcesses(sid int, visit func(int) error) error {
 		pids = strings.Fields(string(data))
 		sessionID = darwinProcessSessionID
 	default:
-		return errors.New("不支持枚举此平台的终端会话进程")
+		return errors.New("terminal session process enumeration is not supported on this platform")
 	}
 
 	var firstErr error
@@ -213,7 +213,7 @@ func linuxProcessSessionID(pid int) (int, error) {
 }
 
 func procStatSessionID(stat []byte) (int, error) {
-	// comm 可以包含空格和右括号；其后依次为 state、ppid、pgid、sid。
+	// comm can contain spaces and right parentheses; after it come state, ppid, pgid, and sid.
 	end := bytes.LastIndexByte(stat, ')')
 	if end >= 0 {
 		fields := bytes.Fields(stat[end+1:])
@@ -221,11 +221,11 @@ func procStatSessionID(stat []byte) (int, error) {
 			return strconv.Atoi(string(fields[3]))
 		}
 	}
-	return 0, errors.New("无法解析 /proc 进程会话 ID")
+	return 0, errors.New("failed to parse /proc process session ID")
 }
 
 func darwinProcessSessionID(pid int) (int, error) {
-	// syscall.Getsid 不在 Linux 的标准库中，此处仅在 Darwin 上调用同一个系统调用。
+	// syscall.Getsid is not in the Linux standard library, so the same system call is used only on Darwin.
 	sid, _, errno := syscall.Syscall(syscall.SYS_GETSID, uintptr(pid), 0, 0)
 	if errno != 0 {
 		return 0, errno

@@ -4,7 +4,7 @@ import "sync"
 
 const maxOutput = 4 * 1024 * 1024
 
-// output 是有界的字节尾部缓存，偏移量始终对应完整字节流。
+// output is a bounded byte tail buffer; offsets always refer to the full byte stream.
 type output struct {
 	mu   sync.Mutex
 	data []byte
@@ -43,8 +43,8 @@ func (b *output) Read(offset int64) ([]byte, int64, int64) {
 	return append([]byte(nil), b.data[offset-b.base:]...), offset, end
 }
 
-// ReadLimit 从 offset 读取最多 limit 字节，避免复制整个尾部缓存。
-// 返回数据、实际起点、下一偏移和缓存末尾偏移。
+// ReadLimit reads at most limit bytes from offset without copying the entire tail buffer.
+// It returns the data, the actual start, the next offset, and the buffer end offset.
 func (b *output) ReadLimit(offset int64, limit int) ([]byte, int64, int64, int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

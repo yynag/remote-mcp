@@ -11,7 +11,7 @@ import (
 	"remote-mcp/internal/protocol"
 )
 
-// Engine 管理单个远端实例的任务、连接和文件传输。
+// Engine manages jobs, connections, and file transfers for a single remote instance.
 type Engine struct {
 	id        string
 	guide     string
@@ -23,7 +23,7 @@ type Engine struct {
 	sessions  *SessionManager
 }
 
-// NewEngine 创建一个实例执行引擎。
+// NewEngine creates an instance execution engine.
 func NewEngine(id, guide string) *Engine {
 	e := &Engine{id: id, guide: guide, jobs: make(map[string]*Job), peers: make(map[*protocol.Peer]struct{}), done: make(chan struct{}), transfers: newTransferStore(), sessions: newSessionManager(id)}
 	go e.reap()
@@ -43,7 +43,7 @@ func NewEngine(id, guide string) *Engine {
 	return e
 }
 
-// Close 停止引擎任务、会话、传输清理器和所有客户端连接。
+// Close stops engine jobs, sessions, the transfer reaper, and all client connections.
 func (e *Engine) Close() {
 	close(e.done)
 	e.transfers.reap(true)
@@ -78,18 +78,18 @@ func (e *Engine) broadcast(m protocol.Message) {
 	}
 }
 
-// ServePeer 处理客户端直连控制通道。
+// ServePeer handles a direct client control channel.
 func (e *Engine) ServePeer(p *protocol.Peer) {
 	e.ServeReversePeer(p, "")
 }
 
-// ServeReversePeer 处理经由 transport 建立的控制通道。
+// ServeReversePeer handles a control channel established through the transport.
 func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 	connectionID := newID()
 	remote := p.Conn.RemoteAddr().String()
-	mode := "直连"
+	mode := "direct"
 	if dataURL != "" {
-		mode = "transport反向连接"
+		mode = "transport reverse connection"
 	}
 	e.mu.Lock()
 	e.peers[p] = struct{}{}
@@ -99,18 +99,18 @@ func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 		e.mu.Lock()
 		delete(e.peers, p)
 		e.mu.Unlock()
-		slog.Info("[客户端断开]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote)
+		slog.Info("[client disconnected]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote)
 	}()
 	if err := p.Write(protocol.Hello{Type: "hello", InstanceID: e.id}); err != nil {
-		slog.Error("[实例介绍发送失败]", "instance", e.id, "connection", connectionID, "remote", remote, "error", err)
+		slog.Error("[failed to send instance introduction]", "instance", e.id, "connection", connectionID, "remote", remote, "error", err)
 		return
 	}
-	slog.Info("[实例介绍已发送]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote, "guide_bytes", len(e.guide))
+	slog.Info("[instance introduction sent]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote, "guide_bytes", len(e.guide))
 	go p.Heartbeat()
 	for {
 		var req protocol.Message
 		if err := p.Read(&req); err != nil {
-			slog.Warn("[客户端连接结束]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote, "error", err)
+			slog.Warn("[client connection ended]", "instance", e.id, "connection", connectionID, "mode", mode, "remote", remote, "error", err)
 			return
 		}
 		switch req.Type {
@@ -123,11 +123,11 @@ func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 			}
 			continue
 		case "welcome":
-			slog.Info("[中继注册成功]", "instance", e.id, "connection", connectionID, "remote", remote)
+			slog.Info("[relay registration succeeded]", "instance", e.id, "connection", connectionID, "remote", remote)
 			continue
 		case "heartbeat":
 			if err := p.Write(protocol.Message{Type: "heartbeat_ack"}); err != nil {
-				slog.Error("[心跳应答失败]", "instance", e.id, "connection", connectionID, "remote", remote, "error", err)
+				slog.Error("[heartbeat response failed]", "instance", e.id, "connection", connectionID, "remote", remote, "error", err)
 				return
 			}
 			continue
@@ -135,39 +135,39 @@ func (e *Engine) ServeReversePeer(p *protocol.Peer, dataURL string) {
 			continue
 		}
 		if err := req.ValidateRequest(); err != nil {
-			slog.Warn("[请求格式错误]", "instance", e.id, "connection", connectionID, "remote", remote, "type", req.Type, "error", err)
+			slog.Warn("[request format error]", "instance", e.id, "connection", connectionID, "remote", remote, "type", req.Type, "error", err)
 			_ = p.Write(protocol.Failure(req, "INVALID_REQUEST", err))
 			continue
 		}
 		if req.InstanceID != e.id {
-			_ = p.Write(protocol.Failure(req, "INSTANCE_OFFLINE", errors.New("未知实例")))
+			_ = p.Write(protocol.Failure(req, "INSTANCE_OFFLINE", errors.New("unknown instance")))
 			continue
 		}
-		slog.Info("[请求已接收]", "instance", e.id, "connection", connectionID, "client", req.ClientID, "request", req.RequestID, "method", req.Method)
+		slog.Info("[request received]", "instance", e.id, "connection", connectionID, "client", req.ClientID, "request", req.RequestID, "method", req.Method)
 		go func(req protocol.Message) {
 			if err := p.Write(e.Handle(req)); err != nil {
-				slog.Error("[响应发送失败]", "instance", e.id, "connection", connectionID, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "error", err)
+				slog.Error("[failed to send response]", "instance", e.id, "connection", connectionID, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "error", err)
 			}
 		}(req)
 	}
 }
 
-// Handle 执行一条控制协议请求并生成对应响应。
+// Handle executes one control protocol request and produces the corresponding response.
 func (e *Engine) Handle(req protocol.Message) protocol.Message {
 	started := time.Now()
 	result, err := e.dispatch(req)
 	if err != nil {
 		var pe *protocol.Error
 		if errors.As(err, &pe) {
-			slog.Warn("[请求失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond), "code", pe.Code, "reason", pe.Message)
+			slog.Warn("[request failed]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond), "code", pe.Code, "reason", pe.Message)
 			response := protocol.Failure(req, pe.Code, errors.New(pe.Message))
 			response.Error.Data = pe.Data
 			return response
 		}
-		slog.Error("[请求失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond), "error", err)
+		slog.Error("[request failed]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond), "error", err)
 		return protocol.Failure(req, "REQUEST_FAILED", err)
 	}
-	slog.Info("[请求完成]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond))
+	slog.Info("[request completed]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond))
 	return protocol.Success(req, result)
 }
 
@@ -206,7 +206,7 @@ func (e *Engine) dispatch(req protocol.Message) (any, error) {
 		result["stderr_next_offset"] = ee
 		result["output_truncated"] = so > 0 || eo > 0
 		if result["state"] == "timed_out" {
-			result["error"] = map[string]any{"code": "COMMAND_TIMEOUT", "message": "命令超过 timeout_ms 限制，已被终止"}
+			result["error"] = map[string]any{"code": "COMMAND_TIMEOUT", "message": "command exceeded the timeout_ms limit and was terminated"}
 		}
 		return result, nil
 	case "job.status", "job.output", "job.cancel", "job.kill":
@@ -220,7 +220,7 @@ func (e *Engine) dispatch(req protocol.Message) (any, error) {
 			return nil, err
 		}
 		if p.Offset < 0 || (p.StdoutOffset != nil && *p.StdoutOffset < 0) || (p.StderrOffset != nil && *p.StderrOffset < 0) {
-			return nil, errors.New("offset 不能为负数")
+			return nil, errors.New("offset must not be negative")
 		}
 		j, err := e.getJob(p.JobID)
 		if err != nil {
@@ -253,6 +253,6 @@ func (e *Engine) dispatch(req protocol.Message) (any, error) {
 	case "file.upload", "file.download", "transfer.prepare", "transfer.status", "transfer.commit", "transfer.cancel":
 		return e.transferRequest(req)
 	default:
-		return nil, &protocol.Error{Code: "METHOD_NOT_FOUND", Message: fmt.Sprintf("未知方法 %q", req.Method)}
+		return nil, &protocol.Error{Code: "METHOD_NOT_FOUND", Message: fmt.Sprintf("unknown method %q", req.Method)}
 	}
 }

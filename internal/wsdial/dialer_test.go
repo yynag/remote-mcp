@@ -29,27 +29,27 @@ func TestDialerPolicy(t *testing.T) {
 		t.Run(factory.name, func(t *testing.T) {
 			d := factory.new()
 			if d == global || d.Proxy != nil || d.HandshakeTimeout != factory.timeout {
-				t.Fatalf("拨号器策略不符合预期：%+v", d)
+				t.Fatalf("unexpected dialer policy: %+v", d)
 			}
 			if d.NetDial != nil || d.NetDialContext != nil || d.NetDialTLSContext != nil {
-				t.Fatal("必须保留 Gorilla 标准的 TCP/系统 DNS 拨号路径")
+				t.Fatal("must keep Gorilla's standard TCP/system DNS dialing path")
 			}
 			d.Proxy = http.ProxyFromEnvironment
 			d.HandshakeTimeout = time.Nanosecond
 			fresh := factory.new()
 			if fresh == d || fresh.Proxy != nil || fresh.HandshakeTimeout != factory.timeout {
-				t.Fatal("工厂函数必须返回相互独立的拨号器")
+				t.Fatal("factory must return independent dialers")
 			}
 		})
 	}
 	if websocket.DefaultDialer != global || reflect.ValueOf(global.Proxy).Pointer() != proxy || global.HandshakeTimeout != timeout {
-		t.Fatal("全局 DefaultDialer 被修改了")
+		t.Fatal("global DefaultDialer was modified")
 	}
 }
 
 func TestDialContextEndpointAndError(t *testing.T) {
-	// 即使所有常见代理环境变量均已设置，两类通道仍须拨号至原始主机和端口。
-	// 此处不使用真实 DNS 解析、TCP 或 IPv6 连接。
+	// Even when all common proxy environment variables are set, both channels must dial the original host and port.
+	// No real DNS resolution, TCP, or IPv6 connection is used here.
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
 		t.Setenv(key, "http://proxy.invalid:3128")
 	}
@@ -70,25 +70,25 @@ func TestDialContextEndpointAndError(t *testing.T) {
 				d := factory.new()
 				ctx := context.WithValue(context.Background(), contextKey{}, "caller")
 				before := time.Now()
-				wantErr := errors.New("注入的拨号失败")
+				wantErr := errors.New("injected dial failure")
 				calls := 0
 				d.NetDialContext = func(got context.Context, network, address string) (net.Conn, error) {
 					calls++
 					if network != "tcp" || address != endpoint.address {
-						t.Errorf("dial(%q, %q)，期望 tcp、%q", network, address, endpoint.address)
+						t.Errorf("dial(%q, %q), want tcp, %q", network, address, endpoint.address)
 					}
 					if got.Value(contextKey{}) != "caller" {
-						t.Error("调用方 context 中的值丢失了")
+						t.Error("value in caller context was lost")
 					}
 					deadline, ok := got.Deadline()
 					if !ok || deadline.Before(before.Add(factory.timeout)) || deadline.After(time.Now().Add(factory.timeout)) {
-						t.Errorf("握手截止时间不正确：%v", deadline)
+						t.Errorf("incorrect handshake deadline: %v", deadline)
 					}
 					return nil, wantErr
 				}
 				conn, response, err := d.DialContext(ctx, endpoint.url, nil)
 				if conn != nil || response != nil || !errors.Is(err, wantErr) || calls != 1 {
-					t.Fatalf("DialContext = (%v, %v, %v)，调用次数=%d", conn, response, err, calls)
+					t.Fatalf("DialContext = (%v, %v, %v), calls=%d", conn, response, err, calls)
 				}
 			})
 		}
@@ -108,8 +108,8 @@ func TestDialContextCancellationAndEarlierDeadline(t *testing.T) {
 				case "expired":
 					ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 				default:
-					// 特别是服务端数据通道的 10 秒 context 限制，
-					// 仍须严于数据握手的 45 秒预算。
+					// In particular, the server data channel's 10-second context limit
+					// must still be stricter than the data handshake's 45-second budget.
 					budget := time.Second
 					if factory.name == "data" {
 						budget = 10 * time.Second
@@ -119,13 +119,13 @@ func TestDialContextCancellationAndEarlierDeadline(t *testing.T) {
 				defer cancel()
 				d := factory.new()
 				calls := 0
-				wantErr := errors.New("保留更早的截止时间")
+				wantErr := errors.New("preserve the earlier deadline")
 				d.NetDialContext = func(got context.Context, _, _ string) (net.Conn, error) {
 					calls++
 					if deadline, ok := ctx.Deadline(); ok {
 						actual, hasDeadline := got.Deadline()
 						if !hasDeadline || !actual.Equal(deadline) {
-							t.Errorf("调用方截止时间被改变：得到 %v，期望 %v", actual, deadline)
+							t.Errorf("caller deadline changed: got %v, want %v", actual, deadline)
 						}
 					}
 					if ctx.Err() != nil {
@@ -133,7 +133,7 @@ func TestDialContextCancellationAndEarlierDeadline(t *testing.T) {
 					}
 					cancel()
 					if got.Err() != context.Canceled {
-						t.Error("调用方取消没有传递下去")
+						t.Error("caller cancellation was not propagated")
 					}
 					return nil, wantErr
 				}
@@ -142,7 +142,7 @@ func TestDialContextCancellationAndEarlierDeadline(t *testing.T) {
 					wantErr = ctx.Err()
 				}
 				if calls != 1 || !errors.Is(err, wantErr) {
-					t.Fatalf("错误=%v，期望 %v；拨号次数=%d", err, wantErr, calls)
+					t.Fatalf("error=%v, want %v; dial calls=%d", err, wantErr, calls)
 				}
 			})
 		}
@@ -165,7 +165,7 @@ func TestAddressFamily(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := addressFamily(tt.addr); got != tt.want {
-				t.Errorf("addressFamily = %q，期望 %q", got, tt.want)
+				t.Errorf("addressFamily = %q, want %q", got, tt.want)
 			}
 		})
 	}

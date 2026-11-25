@@ -45,7 +45,7 @@ func newProcessGroup(cmd *exec.Cmd) (*processGroup, error) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
-	// 对 Job 之外仍持有输出管道的进程，给 Wait 一个回收上限。
+	// For processes outside the job that still hold the output pipes, give Wait a reaping bound.
 	cmd.WaitDelay = 3 * time.Second
 	return &processGroup{job: job}, nil
 }
@@ -72,7 +72,7 @@ func (p *processGroup) attach(cmd *exec.Cmd) (err error) {
 }
 
 func resumeJobProcess(pid uint32) error {
-	// os/exec 已关闭创建时的线程句柄。挂起进程还未运行，按 PID 找回主线程。
+	// os/exec has already closed the creation thread handle. The suspended process has not run yet; find the main thread by PID.
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
 	if err != nil {
 		return fmt.Errorf("CreateToolhelp32Snapshot: %w", err)
@@ -93,21 +93,21 @@ func resumeJobProcess(pid uint32) error {
 			return fmt.Errorf("GetProcessIdOfThread: %w", callErr)
 		}
 		if uint32(owner) != pid {
-			return errors.New("进程主线程已退出")
+			return errors.New("process main thread has exited")
 		}
 		previous, err := windows.ResumeThread(thread)
 		if err != nil {
 			return fmt.Errorf("ResumeThread: %w", err)
 		}
 		if previous != 1 {
-			return fmt.Errorf("ResumeThread: 主线程挂起计数为 %d，预期为 1", previous)
+			return fmt.Errorf("ResumeThread: main thread suspend count is %d, want 1", previous)
 		}
 		return nil
 	}
 	if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
-		return errors.New("找不到挂起进程的主线程")
+		return errors.New("main thread of suspended process not found")
 	}
-	return fmt.Errorf("枚举进程线程: %w", err)
+	return fmt.Errorf("enumerate process threads: %w", err)
 }
 
 func (p *processGroup) terminate(_ bool) error {

@@ -18,13 +18,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestTransferResumeAfterClientReconnect 验证重连后从已完成分块继续上传和下载。
+// TestTransferResumeAfterClientReconnect verifies that upload and download resume from completed chunks after a reconnect.
 func TestTransferResumeAfterClientReconnect(t *testing.T) {
 	directory := t.TempDir()
 	buildBinaries(t)
 	serverPort := freePort(t)
 	guide := filepath.Join(directory, "guide.md")
-	if err := os.WriteFile(guide, []byte("测试指南"), 0600); err != nil {
+	if err := os.WriteFile(guide, []byte("test guide"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	config := filepath.Join(directory, "server.yaml")
@@ -96,10 +96,10 @@ func TestTransferResumeAfterClientReconnect(t *testing.T) {
 	}
 	completed, err := decodeStatus(result)
 	if err != nil || completed.State != "completed" {
-		t.Fatalf("续传上传未完成：%+v，错误：%v", completed, err)
+		t.Fatalf("resumed upload did not complete: %+v, error: %v", completed, err)
 	}
 	if got := testHash(t, remote); got != whole {
-		t.Fatalf("上传后 SHA-256 = %s，期望 %s", got, whole)
+		t.Fatalf("SHA-256 after upload = %s, want %s", got, whole)
 	}
 
 	downValue, err := second.Request(ctx, "resume-instance", "transfer.prepare", protocol.TransferSpec{
@@ -146,10 +146,10 @@ func TestTransferResumeAfterClientReconnect(t *testing.T) {
 	}
 	completed, err = decodeStatus(result)
 	if err != nil || completed.State != "completed" {
-		t.Fatalf("续传下载未完成：%+v，错误：%v", completed, err)
+		t.Fatalf("resumed download did not complete: %+v, error: %v", completed, err)
 	}
 	if got := testHash(t, local); got != whole {
-		t.Fatalf("下载后 SHA-256 = %s，期望 %s", got, whole)
+		t.Fatalf("SHA-256 after download = %s, want %s", got, whole)
 	}
 }
 

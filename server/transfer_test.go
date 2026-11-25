@@ -82,11 +82,11 @@ func dataReply(t *testing.T, c *websocket.Conn, kind string) {
 		t.Fatal(err)
 	}
 	if result.Type != kind {
-		t.Fatalf("期望 %s，实际 %+v", kind, result)
+		t.Fatalf("want %s, got %+v", kind, result)
 	}
 }
 
-// TestTransferChecksumRetryAndAtomicCommit 验证分块重试和原子提交行为。
+// TestTransferChecksumRetryAndAtomicCommit verifies chunk retry and atomic commit behavior.
 func TestTransferChecksumRetryAndAtomicCommit(t *testing.T) {
 	e, url := transferEngine(t)
 	dir := transferTestDir(t)
@@ -107,10 +107,10 @@ func TestTransferChecksumRetryAndAtomicCommit(t *testing.T) {
 	}
 	dataReply(t, c, "data.error")
 	if len(transferCall(t, e, "transfer.status", protocol.TransferSpec{TransferID: id})["completed_chunks"].([]int)) != 0 {
-		t.Fatal("错误的分块被标记为已完成")
+		t.Fatal("an incorrect chunk was marked completed")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("未提交的目标文件已存在：%v", err)
+		t.Fatalf("uncommitted target file already exists: %v", err)
 	}
 	c = dataSocket(t, url, h)
 	dataReply(t, c, "data.ready")
@@ -119,19 +119,19 @@ func TestTransferChecksumRetryAndAtomicCommit(t *testing.T) {
 	}
 	dataReply(t, c, "data.done")
 	if transferCall(t, e, "transfer.commit", protocol.TransferSpec{TransferID: id})["state"] != "completed" {
-		t.Fatal("未提交")
+		t.Fatal("not committed")
 	}
 	actual, err := os.ReadFile(path)
 	if err != nil || string(actual) != string(payload) {
-		t.Fatalf("载荷：%q，%v", actual, err)
+		t.Fatalf("payload: %q, %v", actual, err)
 	}
 	transferCall(t, e, "transfer.commit", protocol.TransferSpec{TransferID: id})
 	if transferCall(t, e, "transfer.cancel", protocol.TransferSpec{TransferID: id})["state"] != "completed" {
-		t.Fatal("取消操作把已提交状态降级了")
+		t.Fatal("cancel downgraded the committed state")
 	}
 }
 
-// TestTransferFourSocketLimitAndCancelCleanup 验证四路并发上限及取消清理。
+// TestTransferFourSocketLimitAndCancelCleanup verifies the four-way concurrency limit and cancellation cleanup.
 func TestTransferFourSocketLimitAndCancelCleanup(t *testing.T) {
 	e, url := transferEngine(t)
 	dir := transferTestDir(t)
@@ -161,26 +161,26 @@ func TestTransferFourSocketLimitAndCancelCleanup(t *testing.T) {
 	active := len(tr.active)
 	tr.mu.Unlock()
 	if active != 4 {
-		t.Fatalf("活动连接数 = %d", active)
+		t.Fatalf("active connections = %d", active)
 	}
 	if transferCall(t, e, "transfer.cancel", protocol.TransferSpec{TransferID: id})["state"] != "cancelled" {
-		t.Fatal("未取消")
+		t.Fatal("not cancelled")
 	}
 	if _, err := os.Stat(temp); !os.IsNotExist(err) {
-		t.Fatalf("临时分块文件未删除：%v", err)
+		t.Fatalf("temporary chunk file was not removed: %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("目标文件已被创建：%v", err)
+		t.Fatalf("target file was created: %v", err)
 	}
 	tr.mu.Lock()
 	open := tr.file != nil
 	tr.mu.Unlock()
 	if open {
-		t.Fatal("取消后文件仍未关闭")
+		t.Fatal("file remained open after cancellation")
 	}
 }
 
-// TestTransferRetentionAndResumeManifest 验证续传清单及 30 分钟保留期限。
+// TestTransferRetentionAndResumeManifest verifies the resume manifest and 30-minute retention period.
 func TestTransferRetentionAndResumeManifest(t *testing.T) {
 	e, _ := transferEngine(t)
 	dir := transferTestDir(t)
@@ -198,12 +198,12 @@ func TestTransferRetentionAndResumeManifest(t *testing.T) {
 	temp := tr.tmp
 	tr.mu.Unlock()
 	if retention < 29*time.Minute || retention > 30*time.Minute {
-		t.Fatalf("保留时长 = %v", retention)
+		t.Fatalf("retention = %v", retention)
 	}
 	bad := spec
 	bad.ChunkSHA256 = []string{strings.Repeat("0", 64)}
 	if _, err := e.transfers.prepare(bad, "new-client"); err == nil {
-		t.Fatal("被修改的分块清单竟然被接受")
+		t.Fatal("modified chunk manifest was accepted")
 	}
 	if _, err := e.transfers.prepare(spec, "new-client"); err != nil {
 		t.Fatal(err)
@@ -215,9 +215,9 @@ func TestTransferRetentionAndResumeManifest(t *testing.T) {
 	tr.expires = time.Now().Add(-time.Second)
 	tr.mu.Unlock()
 	if _, err := e.transfers.get(spec.TransferID, "new-client"); err == nil {
-		t.Fatal("已过期的传输竟然被接受")
+		t.Fatal("expired transfer was accepted")
 	}
 	if _, err := os.Stat(temp); !os.IsNotExist(err) {
-		t.Fatalf("过期后临时分块文件仍残留：%v", err)
+		t.Fatalf("temporary chunk file remained after expiry: %v", err)
 	}
 }
