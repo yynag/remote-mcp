@@ -1,30 +1,37 @@
 # Remote MCP
 
-Remote MCP 使用同一套 WebSocket 协议连接 Go server、transport 和 Go MCP client。client 通过标准输入输出提供 MCP Server，支持实例指南、命令执行、异步任务和文件传输。
+![Go](https://img.shields.io/badge/Go-1.25.5-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-## 目录
+English | [&#20013;&#25991;](README.zh-CN.md)
 
-- `server`：远端命令和文件代理应用，入口为 `server/main.go`。
-- `transport`：WebSocket 中继应用，入口为 `transport/main.go`，仅需 Linux amd64。
-- `client`：stdio MCP Server 应用，入口为 `client/main.go`。
-- `internal/protocol`：client、server 和 transport 共享的协议模块。
+Remote MCP connects a Go server, a transport, and a Go MCP client over a single WebSocket protocol. The client exposes an MCP server over stdio and supports instance guides, command execution, asynchronous jobs, and file transfer.
 
-## 安装指南
+## Layout
 
-需要 Go 1.25.5 或更新版本。
+- `server`: remote command and file proxy application; entry point at `server/main.go`.
+- `transport`: WebSocket relay application; entry point at `transport/main.go`; only a Linux amd64 build is required.
+- `client`: stdio MCP server application; entry point at `client/main.go`.
+- `internal/protocol`: shared protocol module for the client, server, and transport.
 
-构建 server、transport 和 client：
+## Installation
+
+Go 1.25.5 or newer is required.
+
+Prebuilt binaries are available from [GitHub Releases](https://github.com/yynag/remote-mcp/releases). Release artifacts follow the naming pattern `remote-mcp-{server|transport|client}_{version}_{os}_{arch}`, where `{version}` is the release version and `{os}` and `{arch}` identify the target platform. You can also build from source.
+
+Build the server, transport, and client:
 
 ```bash
 mkdir -p build
-# windows amd64
-# darwin amd64/arm64
+# Windows amd64
+# Darwin amd64/arm64
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o build/remote-mcp-server.exe ./server
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o build/remote-mcp-transport ./transport
 CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o build/remote-mcp-client ./client
 ```
 
-server 配置文件与二进制放在同一目录，`guide.md` 也放在二进制同目录。配置文件使用 YAML：
+Place the server configuration file in the same directory as the binary, and place `guide.md` in that directory as well. The configuration file uses YAML:
 
 ```yaml
 instance_id: "gpu-01"
@@ -33,7 +40,7 @@ listen: ":9000"
 gateway: ""
 ```
 
-启动：
+Start the components:
 
 ```bash
 ./build/remote-mcp-transport --listen :9098
@@ -41,15 +48,15 @@ gateway: ""
 ./build/remote-mcp-client --gateway 127.0.0.1:9098
 ```
 
-client 也可以直连：
+The client can also connect directly:
 
 ```bash
 ./build/remote-mcp-client --remotes 127.0.0.1:9000
 ```
 
-### IPv6 与 DNS 地址
+### IPv6 and DNS Addresses
 
-client 的 `--gateway`、`--remotes` 和 server 的 `gateway` 支持 IPv4、IPv6 和 ASCII DNS 主机名，地址均须包含端口；IPv6 必须使用方括号：
+The client's `--gateway` and `--remotes` options, and the server's `gateway` setting, support IPv4, IPv6, and ASCII DNS hostnames. Every address must include a port, and IPv6 addresses must be enclosed in square brackets:
 
 ```bash
 ./build/remote-mcp-client --remotes '[2001:db8::10]:9000'
@@ -57,7 +64,7 @@ client 的 `--gateway`、`--remotes` 和 server 的 `gateway` 支持 IPv4、IPv6
 ./build/remote-mcp-client --gateway relay.example.com:9098
 ```
 
-以上 IPv6 为文档示例地址，部署时请替换为实际地址。server 配置示例：
+The IPv6 addresses above are documentation examples; replace them with actual addresses when deploying. Example server configuration:
 
 ```yaml
 instance_id: "gpu-01"
@@ -66,80 +73,80 @@ listen: ":9000"
 gateway: "relay.example.com:9098"
 ```
 
-- DNS 在拨号时由系统解析，保留 Go 的 TCP 双栈快速回退能力；不保证 WebSocket 握手失败后自动尝试另一地址。中文域名请使用 punycode；不支持带 zone 的 IPv6（如 `%en0`）。
-- server 的 `listen` 允许空 host（`:9000`）；`[::]:9000` 和空 host 的实际双栈监听效果依赖系统，不保证跨平台一致；主机名监听不代表绑定所有解析地址。
-- 控制和文件数据连接均显式直连，不使用 `HTTP_PROXY`、`HTTPS_PROXY` 等环境代理。**兼容变化：文件数据连接不再隐式使用环境代理。**
-- 控制与 `/data` 独立拨号，DNS 多个 A/AAAA 地址须指向同一个有状态服务进程；当前不支持通过 DNS 轮询分流到多个独立 server/transport 副本。
-- 当前直连需手动指定地址，没有自动发现、打洞或直连失败后回到中继的路由切换能力。IPv6 可路由也不代表防火墙允许入站。
-- 本次 IPv6/DNS 改造以单元测试、源码审查和 Windows 交叉编译验收；真实 IPv6 连通性、Windows 双栈监听、系统 DNS 与实际回退时延尚未实测。
+- DNS is resolved by the system at dial time, retaining Go's TCP dual-stack fast fallback behavior; automatic fallback to another address after a WebSocket handshake failure is not guaranteed. Use punycode for non-ASCII domain names; IPv6 addresses with a zone identifier (such as `%en0`) are not supported.
+- The server's `listen` accepts an empty host (`:9000`); the actual dual-stack listening behavior of `[::]:9000` and an empty host depends on the system and is not guaranteed to be consistent across platforms. Listening on a hostname does not mean binding every resolved address.
+- Control and file data connections both connect directly and explicitly, and do not use environment proxies such as `HTTP_PROXY` or `HTTPS_PROXY`. **Compatibility change: file data connections no longer implicitly use environment proxies.**
+- Control and `/data` connections dial independently. Multiple A/AAAA addresses for a DNS name must point to the same stateful service process; distributing traffic across multiple independent server/transport replicas via DNS round-robin is not currently supported.
+- Direct connections currently require manually specified addresses. There is no auto-discovery, NAT traversal, or route switching back to the relay after a direct connection fails. A routable IPv6 address does not mean that the firewall permits inbound traffic.
+- This IPv6/DNS change was validated through unit tests, source review, and Windows cross-compilation. Real IPv6 connectivity, Windows dual-stack listening, system DNS behavior, and actual fallback latency have not yet been tested.
 
-MCP Host 的 stdio 配置：
+MCP Host stdio configuration:
 
 ```json
 {
   "mcpServers": {
     "remote-mcp": {
-      "command": "/绝对路径/build/remote-mcp-client",
+      "command": "/absolute/path/build/remote-mcp-client",
       "args": ["--gateway", "127.0.0.1:9098"]
     }
   }
 }
 ```
 
-`instance_list` 只返回实例 ID 和在线状态，不包含指南正文；AI 需要使用某实例时再调用 `instance_get` 读取指南，避免无关指南占用上下文。
+`instance_list` returns only instance IDs and online status, not guide content. When the AI needs to use an instance, it calls `instance_get` to read the guide, preventing unrelated guides from consuming context.
 
-## 远程命令与脚本执行
+## Remote Command and Script Execution
 
-使用 `exec_run` 或 `job_start` 前，先调用 `instance_get` 阅读实例指南，确认目标平台、shell、可用解释器和可信远端路径。命令会原样交由目标平台的 shell 解析：Unix 使用 `/bin/sh`，Windows 使用 `powershell.exe`；系统不会转换命令语法，也不保证跨 shell 兼容。
+Before using `exec_run` or `job_start`, call `instance_get` to read the instance guide and confirm the target platform, shell, available interpreters, and trusted remote paths. Commands are passed as-is to the target platform's shell: `/bin/sh` on Unix and `powershell.exe` on Windows. The system does not translate command syntax and does not guarantee cross-shell compatibility.
 
-短命令应使用已确认 shell 对应的引号规则。对于复杂或多行脚本，建议先在本地编写并检查，再确认远端可信目标路径，通过 `file_upload` 上传，然后明确调用远端已安装的解释器（例如适用时使用 `python` 或 `pwsh`）。上传脚本不会自动选择或调用解释器。不要将未经校验的参数拼接进 shell 命令字符串。以上做法可减少不必要的转义和注入错误，但不能消除 shell 转义风险。
+For short commands, use the quoting rules of the confirmed shell. For complex or multi-line scripts, write and check the script locally first, confirm a trusted destination path on the remote host, upload it with `file_upload`, and then explicitly invoke an interpreter installed on the remote host (for example, `python` or `pwsh` when applicable). Uploading a script does not automatically select or invoke an interpreter. Do not concatenate unvalidated arguments into shell command strings. These practices reduce unnecessary escaping and injection errors but do not eliminate shell escaping risk.
 
-### guide.md 模板
+### guide.md Template
 
-将以下内容保存为 server 二进制同目录的 `guide.md`，再按实际环境修改：
+Save the following content as `guide.md` in the same directory as the server binary, then adapt it to the actual environment:
 
 ```markdown
-# 远端服务器使用指南
+# Remote Server Guide
 
-请告诉 AI 如何使用这台远端服务器：
+Tell the AI how to use this remote server:
 
-- 操作系统和默认 shell，例如 Linux、Windows、PowerShell、WSL 或 macOS。
-- 可用工具、版本和调用方式，例如 Python、Docker、Bun、Go、CUDA。
-- 工作目录、项目目录、数据目录、临时目录和结果目录。
-- 必须使用的容器、虚拟环境、路径或命令。
-- 网络、代理、镜像、GPU、磁盘和挂载目录等特殊情况。
-- 常见命令示例，以及命令失败时应检查什么。
-- 删除、覆盖文件、停止服务或大量占用资源前，如何向用户说明。
-- 任务完成后的验证方式、日志位置和产物位置。
+- Operating system and default shell, for example Linux, Windows, PowerShell, WSL, or macOS.
+- Available tools, versions, and invocation methods, for example Python, Docker, Bun, Go, CUDA.
+- Working, project, data, temporary, and result directories.
+- Required containers, virtual environments, paths, or commands.
+- Special considerations such as networking, proxies, mirrors, GPUs, disks, and mounted directories.
+- Common command examples and what to check when a command fails.
+- How to explain to the user before deleting or overwriting files, stopping services, or consuming significant resources.
+- How to verify task completion, and where logs and artifacts are located.
 
-工作目录是使用建议，不是访问限制。工具不会阻止访问其他路径。
+The working directory is a usage recommendation, not an access restriction. The tools do not block access to other paths.
 ```
 
-## 交互式会话
+## Interactive Sessions
 
-执行单条命令优先使用 `exec_run`。需要在多条命令之间保留当前目录、变量等进程状态，或持续写入 stdin 时，使用交互式会话。所有会话工具都需要 `instance_id`：
+Prefer `exec_run` for a single command. Use an interactive session when process state such as the current directory or variables must persist across multiple commands, or when you need to keep writing to stdin. All session tools require `instance_id`:
 
-| 工具 | 用法 |
+| Tool | Usage |
 | --- | --- |
-| `session_create` | 在远端 120×40 伪终端（PTY）中启动 `command`，可选 `args`（参数数组）和 `cwd`，返回 `session_id`。 |
-| `session_write` | 向 `session_id` 写入 `input`，返回 `bytes_written`。提交命令时 Unix 追加 `\n`，Windows 追加 `\r`。 |
-| `session_read` | 从 `session_id` 的字节偏移 `offset`（默认 `0`）读取输出。续读时把上次的 `next_offset` 作为新的 `offset`；`max_bytes` 默认且最多为 64 KiB。 |
-| `session_close` | 按 `session_id` 关闭会话并尽力清理进程；`cleanup_incomplete=true` 表示清理不完整。 |
-| `session_list` | 列出实例上运行中及仍在保留期内的会话，并返回状态。 |
+| `session_create` | Start `command` in a 120×40 pseudo-terminal (PTY) on the remote host. Optional `args` (argument array) and `cwd`; returns `session_id`. |
+| `session_write` | Write `input` to `session_id`; returns `bytes_written`. When submitting a command, Unix appends `\n` and Windows appends `\r`. |
+| `session_read` | Read output from `session_id` at byte offset `offset` (default `0`). For continuation reads, pass the previous `next_offset` as the new `offset`. `max_bytes` defaults to and is capped at 64 KiB. |
+| `session_close` | Close the session identified by `session_id` and make a best-effort cleanup of processes; `cleanup_incomplete=true` indicates incomplete cleanup. |
+| `session_list` | List running sessions and sessions still within the retention period on the instance, with their status. |
 
-`wait_ms` 默认 `0`（不等待），需要等待新输出时建议 `500`～`2000` 毫秒，最长 `30000` 毫秒；有新输出、发生截断或会话不再运行时会提前返回。若请求偏移早于缓存起点，响应以 `truncated=true` 和 `base_offset` 标明。`strip_ansi` 默认 `false`；开启后按响应分块过滤，跨块的 ANSI 转义序列可能残留，`next_offset` 仍按原始字节推进。
+`wait_ms` defaults to `0` (no waiting). When waiting for new output, `500`–`2000` milliseconds is recommended, with a maximum of `30000` milliseconds. The call returns early when new output arrives, truncation occurs, or the session is no longer running. If the requested offset is earlier than the start of the buffer, the response indicates this with `truncated=true` and `base_offset`. `strip_ansi` defaults to `false`; when enabled, filtering is applied per response chunk, so ANSI escape sequences that span chunks may remain, and `next_offset` still advances by raw bytes.
 
-会话空闲 30 分钟后由巡检回收；只有实际读到或写入字节才刷新空闲时间。会话结束后保留 10 分钟供续读。每实例最多 8 个会话，启动中、运行中、关闭中和保留的已结束会话都占名额；满额时先淘汰最早结束的会话，若仍满则拒绝创建。会话属于实例，不按 client 隔离：同一实例的所有 client 均可查看、读取、写入和关闭会话。
+Sessions are reclaimed by a sweeper after 30 minutes of inactivity; idle time is refreshed only when bytes are actually read or written. Finished sessions are retained for 10 minutes for continuation reads. Each instance supports at most 8 sessions; sessions that are starting, running, closing, and finished-but-retained all count toward the limit. When the limit is reached, the earliest finished session is evicted first; if the instance is still full, creation is rejected. Sessions belong to the instance and are not isolated per client: all clients connected to the same instance can list, read, write, and close its sessions.
 
-Windows 使用 ConPTY，最低支持 Windows 10 1809 / Windows Server 2019。已在 Windows 11 + PowerShell 7 上验证创建、读写、自然退出码、输出积压时关闭、配额与后台子进程回收；关闭会话时通过 Job Object 终止进程树。PowerShell `Start-Process` 默认经 shell 启动的进程可能不在该 Job 中，需要时使用 `-NoNewWindow` 或自行管理。其他 Windows 版本未实测。Unix 关闭时会尽力清理同一终端会话（SID）中的进程，但不保证清理主动调用 `setsid` 脱离的进程。
+Windows uses ConPTY and requires at least Windows 10 1809 / Windows Server 2019. Creation, read/write, natural exit codes, closing with output backlog, quotas, and background child-process reclamation have been verified on Windows 11 + PowerShell 7; closing a session terminates the process tree via a Job Object. By default, processes launched through the shell by PowerShell `Start-Process` may not be in that Job; use `-NoNewWindow` when needed or manage them yourself. Other Windows versions have not been tested. On Unix, closing a session makes a best-effort attempt to clean up processes in the same terminal session (SID), but processes that detach themselves by calling `setsid` are not guaranteed to be cleaned up.
 
-## 构建和测试
+## Build and Test
 
 ```bash
 go test -race ./...
 go vet ./...
 ```
 
-相对 `guide` 路径从 server 二进制目录读取；`gateway` 非空时 server 反向连接 transport，但仍启动本地监听。client 的 `--gateway` 和 `--remotes` 互斥，地址格式为 `host:port`（IPv6 为 `[地址]:port`）。
+Relative `guide` paths are read from the server binary directory. When `gateway` is non-empty, the server reverse-connects to the transport but still starts its local listener. The client's `--gateway` and `--remotes` are mutually exclusive; addresses use the `host:port` format (`[address]:port` for IPv6).
 
-文件传输使用 5 MiB 分块、4 路并行、断点续传和 SHA-256 校验。当前不提供认证、授权或路径沙箱，请部署在可信网络或安全隧道内，不要直接向公网开放远程命令与文件端口。公网部署需另行落实 TLS、身份认证与授权、防火墙限制；IPv6 支持不改变这些安全要求。
+File transfer uses 5 MiB chunks, 4-way parallelism, resumable transfers, and SHA-256 verification. There is currently no authentication, authorization, or path sandbox, so deploy on a trusted network or inside a secure tunnel and do not expose the remote command and file ports directly to the public internet. Public deployments must separately implement TLS, authentication and authorization, and firewall restrictions; IPv6 support does not change these security requirements.

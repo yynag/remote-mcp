@@ -1,5 +1,5 @@
-# 协议版本一
+# Protocol Version 1
 
-控制通道使用 JSON WebSocket。请求包含 `version`、`type`、`client_id`、`request_id`、`instance_id`、`method` 和 `params`；响应返回对应的客户端、请求和实例标识。server 建立连接后立即发送 `hello`。`/data` WebSocket 用于独立文件分块连接。
+The control channel uses a JSON WebSocket. Requests contain `version`, `type`, `client_id`, `request_id`, `instance_id`, `method`, and `params`; responses return the corresponding client, request, and instance identifiers. The server sends `hello` immediately after a connection is established. The `/data` WebSocket is used for independent file-chunk connections.
 
-命令、任务、实例介绍和文件传输均使用同一套控制协议。文件数据通过独立的数据 WebSocket 连接传输；每条数据连接只处理一个文件分块，并使用 `transfer_id`、分块编号、偏移量、长度和 SHA-256 校验。固定使用 5 MiB 分块和 4 路并行；传输可通过 `transfer_id` 续传，服务端保留状态 30 分钟。
+Commands, jobs, instance guides, and file transfers all use the same control protocol. File data is transferred over independent data WebSocket connections; each data connection handles a single file chunk and uses `transfer_id`, chunk index, offset, length, and SHA-256 verification. Chunks are fixed at 5 MiB with 4-way parallelism; transfers can resume by `transfer_id`, and the server retains state for 30 minutes.
