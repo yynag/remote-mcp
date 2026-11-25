@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: server
+            pkg: ./server
+            goos: windows
+            goarch: amd64
+            ext: .exe
+            archive: zip
+            ldflags: -s -w
+          - component: server
+            pkg: ./server
+            goos: linux
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w
+          - component: server
+            pkg: ./server
+            goos: linux
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w
+          - component: server
+            pkg: ./server
+            goos: darwin
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w
+          - component: server
+            pkg: ./server
+            goos: darwin
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w
+
+          - component: transport
+            pkg: ./transport
+            goos: linux
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w
+          - component: transport
+            pkg: ./transport
+            goos: linux
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w
+
+          - component: client
+            pkg: ./client
+            goos: windows
+            goarch: amd64
+            ext: .exe
+            archive: zip
+            ldflags: -s -w -X main.version=$VERSION
+          - component: client
+            pkg: ./client
+            goos: linux
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w -X main.version=$VERSION
+          - component: client
+            pkg: ./client
+            goos: linux
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w -X main.version=$VERSION
+          - component: client
+            pkg: ./client
+            goos: darwin
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w -X main.version=$VERSION
+          - component: client
+            pkg: ./client
+            goos: darwin
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+            ldflags: -s -w -X main.version=$VERSION
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags "${{ matrix.ldflags }}" \
+            -o "dist/remote-mcp-${{ matrix.component }}${{ matrix.ext }}" ${{ matrix.pkg }}
+
+      - name: Package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="remote-mcp-${{ matrix.component }}_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd dist && zip "${NAME}.zip" "remote-mcp-${{ matrix.component }}${{ matrix.ext }}")
+          else
+            tar -czf "dist/${NAME}.tar.gz" -C dist "remote-mcp-${{ matrix.component }}${{ matrix.ext }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-mcp-${{ matrix.component }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Generate checksums
+        run: cd dist && sha256sum * | grep -v 'SHA256SUMS$' > SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
