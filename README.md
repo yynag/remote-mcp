@@ -115,6 +115,24 @@ MCP Host 的 stdio 配置：
 工作目录是使用建议，不是访问限制。工具不会阻止访问其他路径。
 ```
 
+## 交互式会话
+
+执行单条命令优先使用 `exec_run`。需要在多条命令之间保留当前目录、变量等进程状态，或持续写入 stdin 时，使用交互式会话。所有会话工具都需要 `instance_id`：
+
+| 工具 | 用法 |
+| --- | --- |
+| `session_create` | 在远端 120×40 伪终端（PTY）中启动 `command`，可选 `args`（参数数组）和 `cwd`，返回 `session_id`。 |
+| `session_write` | 向 `session_id` 写入 `input`，返回 `bytes_written`。提交命令时 Unix 追加 `\n`，Windows 追加 `\r`。 |
+| `session_read` | 从 `session_id` 的字节偏移 `offset`（默认 `0`）读取输出。续读时把上次的 `next_offset` 作为新的 `offset`；`max_bytes` 默认且最多为 64 KiB。 |
+| `session_close` | 按 `session_id` 关闭会话并尽力清理进程；`cleanup_incomplete=true` 表示清理不完整。 |
+| `session_list` | 列出实例上运行中及仍在保留期内的会话，并返回状态。 |
+
+`wait_ms` 默认 `0`（不等待），需要等待新输出时建议 `500`～`2000` 毫秒，最长 `30000` 毫秒；有新输出、发生截断或会话不再运行时会提前返回。若请求偏移早于缓存起点，响应以 `truncated=true` 和 `base_offset` 标明。`strip_ansi` 默认 `false`；开启后按响应分块过滤，跨块的 ANSI 转义序列可能残留，`next_offset` 仍按原始字节推进。
+
+会话空闲 30 分钟后由巡检回收；只有实际读到或写入字节才刷新空闲时间。会话结束后保留 10 分钟供续读。每实例最多 8 个会话，启动中、运行中、关闭中和保留的已结束会话都占名额；满额时先淘汰最早结束的会话，若仍满则拒绝创建。会话属于实例，不按 client 隔离：同一实例的所有 client 均可查看、读取、写入和关闭会话。
+
+Windows 使用 ConPTY，最低支持 Windows 10 1809 / Windows Server 2019。已在 Windows 11 + PowerShell 7 上验证创建、读写、自然退出码、输出积压时关闭、配额与后台子进程回收；关闭会话时通过 Job Object 终止进程树。PowerShell `Start-Process` 默认经 shell 启动的进程可能不在该 Job 中，需要时使用 `-NoNewWindow` 或自行管理。其他 Windows 版本未实测。Unix 关闭时会尽力清理同一终端会话（SID）中的进程，但不保证清理主动调用 `setsid` 脱离的进程。
+
 ## 构建和测试
 
 ```bash

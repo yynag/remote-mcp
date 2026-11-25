@@ -43,8 +43,9 @@ type Message struct {
 
 // Error 是控制协议响应中的远端错误。
 type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Data    map[string]any `json:"data,omitempty"`
 }
 
 // Error 返回可读的错误码和错误信息。

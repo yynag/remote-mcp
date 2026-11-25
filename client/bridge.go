@@ -389,25 +389,17 @@ func (b *Bridge) requestOn(ctx context.Context, conn *connection, instanceID, me
 		b.mu.Unlock()
 		return nil, fmt.Errorf("发送请求失败：%w", err)
 	}
-	budget := 30 * time.Second
-	if method == "exec.run" {
-		var command struct {
-			TimeoutMS int64 `json:"timeout_ms"`
-		}
-		_ = json.Unmarshal(encoded, &command)
-		if command.TimeoutMS == 0 {
-			command.TimeoutMS = 30_000
-		}
-		budget = time.Duration(command.TimeoutMS)*time.Millisecond + 15*time.Second
-	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, budget)
+		ctx, cancel = context.WithTimeout(ctx, requestBudget(method, encoded))
 		defer cancel()
 	}
 	select {
 	case response := <-result:
 		if response.err != nil {
+			if remoteErr, ok := response.err.(*protocol.Error); ok && remoteErr.Code == "METHOD_NOT_FOUND" && strings.HasPrefix(method, "session.") {
+				return nil, errors.New("该实例不支持交互式会话，请升级 server")
+			}
 			return nil, response.err
 		}
 		var value any
@@ -424,6 +416,29 @@ func (b *Bridge) requestOn(ctx context.Context, conn *connection, instanceID, me
 		return nil, fmt.Errorf("请求 %s：%w", method, ctx.Err())
 	case <-b.ctx.Done():
 		return nil, errors.New("CLIENT_CLOSED")
+	}
+}
+
+func requestBudget(method string, params json.RawMessage) time.Duration {
+	const defaultBudget = 30 * time.Second
+	switch method {
+	case "exec.run":
+		var command struct {
+			TimeoutMS int64 `json:"timeout_ms"`
+		}
+		_ = json.Unmarshal(params, &command)
+		if command.TimeoutMS == 0 {
+			command.TimeoutMS = 30_000
+		}
+		return time.Duration(command.TimeoutMS)*time.Millisecond + 15*time.Second
+	case "session.read":
+		var read struct {
+			WaitMS int64 `json:"wait_ms"`
+		}
+		_ = json.Unmarshal(params, &read)
+		return max(defaultBudget, time.Duration(read.WaitMS)*time.Millisecond+15*time.Second)
+	default:
+		return defaultBudget
 	}
 }
 

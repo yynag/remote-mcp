@@ -20,11 +20,12 @@ type Engine struct {
 	peers     map[*protocol.Peer]struct{}
 	done      chan struct{}
 	transfers *transferStore
+	sessions  *SessionManager
 }
 
 // NewEngine 创建一个实例执行引擎。
 func NewEngine(id, guide string) *Engine {
-	e := &Engine{id: id, guide: guide, jobs: make(map[string]*Job), peers: make(map[*protocol.Peer]struct{}), done: make(chan struct{}), transfers: newTransferStore()}
+	e := &Engine{id: id, guide: guide, jobs: make(map[string]*Job), peers: make(map[*protocol.Peer]struct{}), done: make(chan struct{}), transfers: newTransferStore(), sessions: newSessionManager(id)}
 	go e.reap()
 	go func() {
 		ticker := time.NewTicker(time.Minute)
@@ -35,16 +36,18 @@ func NewEngine(id, guide string) *Engine {
 				return
 			case <-ticker.C:
 				e.transfers.reap(false)
+				e.sessions.reap()
 			}
 		}
 	}()
 	return e
 }
 
-// Close 停止引擎任务、传输清理器和所有客户端连接。
+// Close 停止引擎任务、会话、传输清理器和所有客户端连接。
 func (e *Engine) Close() {
 	close(e.done)
 	e.transfers.reap(true)
+	e.sessions.closeAll()
 	e.mu.RLock()
 	jobs := make([]*Job, 0, len(e.jobs))
 	for _, j := range e.jobs {
@@ -157,7 +160,9 @@ func (e *Engine) Handle(req protocol.Message) protocol.Message {
 		var pe *protocol.Error
 		if errors.As(err, &pe) {
 			slog.Warn("[请求失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond), "code", pe.Code, "reason", pe.Message)
-			return protocol.Failure(req, pe.Code, errors.New(pe.Message))
+			response := protocol.Failure(req, pe.Code, errors.New(pe.Message))
+			response.Error.Data = pe.Data
+			return response
 		}
 		slog.Error("[请求失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "method", req.Method, "duration", time.Since(started).Round(time.Millisecond), "error", err)
 		return protocol.Failure(req, "REQUEST_FAILED", err)
@@ -172,6 +177,8 @@ func (e *Engine) dispatch(req protocol.Message) (any, error) {
 		return map[string]any{"instances": []protocol.Hello{{Type: "hello", InstanceID: e.id}}}, nil
 	case "instance.get":
 		return protocol.Hello{Type: "hello", InstanceID: e.id, Guide: e.guide}, nil
+	case "session.create", "session.write", "session.read", "session.close", "session.list":
+		return e.sessions.request(req)
 	case "exec.run", "job.start":
 		var p commandParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {

@@ -32,7 +32,7 @@ var (
 	buildDir     string
 )
 
-// TestRealMCPFileTransferDirectAndReverse 验证 stdio MCP 和真实直连/中继文件传输。
+// TestRealMCPFileTransferDirectAndReverse 验证 stdio MCP 和真实直连/中继的文件传输与会话。
 func TestRealMCPFileTransferDirectAndReverse(t *testing.T) {
 	buildBinaries(t)
 	for _, reverse := range []bool{false, true} {
@@ -227,6 +227,82 @@ instanceReady:
 	if got := fileHash(t, download); got != wantHash {
 		t.Fatalf("下载文件 SHA-256 = %s，期望 %s", got, wantHash)
 	}
+	t.Run("会话", func(t *testing.T) {
+		runRealSession(t, mcp, instanceID)
+	})
+}
+
+func runRealSession(t *testing.T, mcp *mcpStream, instanceID string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("此会话场景需要 Unix sh")
+	}
+	created := callTool(t, mcp, "session_create", map[string]any{
+		"instance_id": instanceID, "command": "sh",
+	})
+	sessionID, ok := created["session_id"].(string)
+	if !ok || sessionID == "" {
+		t.Fatalf("session_create 未返回会话 ID：%v", created)
+	}
+	const marker = "session-e2e"
+	const input = "echo " + marker + "\n"
+	written := callTool(t, mcp, "session_write", map[string]any{
+		"instance_id": instanceID, "session_id": sessionID, "input": input,
+	})
+	if written["bytes_written"] != float64(len(input)) {
+		t.Fatalf("session_write 写入字节数异常：%v", written)
+	}
+
+	read := func(offset float64, waitMS int) (string, float64) {
+		result := callTool(t, mcp, "session_read", map[string]any{
+			"instance_id": instanceID, "session_id": sessionID, "offset": offset, "wait_ms": waitMS,
+		})
+		page, outputOK := result["output"].(string)
+		next, offsetOK := result["next_offset"].(float64)
+		if !outputOK || !offsetOK || next != offset+float64(len(page)) || result["truncated"] != false {
+			t.Fatalf("session_read 从偏移 %v 读取的响应异常：%v", offset, result)
+		}
+		return page, next
+	}
+	var output strings.Builder
+	var offset float64
+	waitMS := 2000
+	deadline := time.Now().Add(3 * time.Second)
+	// 提示符、输入回显和命令输出可能分块到达；只把独占一行的标记视为命令输出。
+	for {
+		page, next := read(offset, waitMS)
+		output.WriteString(page)
+		offset = next
+		if strings.Contains("\n"+strings.ReplaceAll(output.String(), "\r\n", "\n"), "\n"+marker+"\n") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session_read 未读到命令输出 %q，已读 %q", marker, output.String())
+		}
+		waitMS = 500
+	}
+	if offset <= 0 {
+		t.Fatalf("session_read next_offset = %v，期望大于 0", offset)
+	}
+	if page, _ := read(offset, 100); strings.Contains(page, marker) {
+		t.Fatalf("session_read 从偏移 %v 续读仍返回旧内容：%q", offset, page)
+	}
+
+	listed := callTool(t, mcp, "session_list", map[string]any{"instance_id": instanceID})
+	sessions, ok := listed["sessions"].([]any)
+	if !ok || len(sessions) != 1 {
+		t.Fatalf("session_list 返回的会话列表异常：%v", listed)
+	}
+	session, ok := sessions[0].(map[string]any)
+	if !ok || session["session_id"] != sessionID || session["running"] != true {
+		t.Fatalf("session_list 未找到运行中的会话 %q：%v", sessionID, listed)
+	}
+	closed := callTool(t, mcp, "session_close", map[string]any{
+		"instance_id": instanceID, "session_id": sessionID,
+	})
+	if closed["closed"] != true || closed["cleanup_incomplete"] != false {
+		t.Fatalf("session_close 关闭或清理异常：%v", closed)
+	}
 }
 
 type mcpStream struct {
@@ -322,8 +398,8 @@ func callToolValue(t *testing.T, mcp *mcpStream, name string, arguments map[stri
 func assertToolSchema(t *testing.T, result map[string]any) {
 	t.Helper()
 	tools, ok := result["tools"].([]any)
-	if !ok || len(tools) != 14 {
-		t.Fatalf("tools/list 返回 %d 个工具，期望 14", len(tools))
+	if !ok || len(tools) != 19 {
+		t.Fatalf("tools/list 返回 %d 个工具，期望 19", len(tools))
 	}
 	seen := make(map[string]bool)
 	for _, raw := range tools {
@@ -334,7 +410,10 @@ func assertToolSchema(t *testing.T, result map[string]any) {
 			t.Fatalf("工具 %s 缺少 inputSchema", name)
 		}
 	}
-	for _, name := range []string{"instance_list", "exec_run", "job_start", "job_output", "file_upload", "file_download", "transfer_status", "transfer_cancel"} {
+	for _, name := range []string{
+		"instance_list", "exec_run", "job_start", "job_output", "file_upload", "file_download", "transfer_status", "transfer_cancel",
+		"session_create", "session_write", "session_read", "session_close", "session_list",
+	} {
 		if !seen[name] {
 			t.Fatalf("tools/list 缺少 %s", name)
 		}

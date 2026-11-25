@@ -25,7 +25,7 @@ type Job struct {
 	mu         sync.Mutex
 	ID         string
 	Request    protocol.Message
-	cmd        *exec.Cmd
+	pg         *processGroup
 	stdout     output
 	stderr     output
 	state      string
@@ -47,20 +47,49 @@ func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 	}
 	cmd := shellCommand(p.Command)
 	cmd.Dir = p.Cwd
-	j := &Job{ID: newID(), Request: req, cmd: cmd, state: "running", exitCode: -1, started: time.Now(), done: make(chan struct{})}
+	pg, err := newProcessGroup(cmd)
+	if err != nil {
+		return nil, err
+	}
+	j := &Job{ID: newID(), Request: req, pg: pg, state: "running", exitCode: -1, started: time.Now(), done: make(chan struct{})}
 	cmd.Stdout = &j.stdout
 	cmd.Stderr = &j.stderr
 	if err := cmd.Start(); err != nil {
 		slog.Error("[命令启动失败]", "instance", e.id, "client", req.ClientID, "request", req.RequestID, "error", err)
-		return nil, err
+		return nil, errors.Join(err, pg.close())
+	}
+	if err := pg.attach(cmd); err != nil {
+		killErr := cmd.Process.Kill()
+		closeErr := pg.close()
+		if killErr != nil {
+			go cmd.Wait()
+			return nil, errors.Join(err, closeErr, fmt.Errorf("终止启动失败的进程: %w", killErr))
+		}
+		_ = cmd.Wait()
+		return nil, errors.Join(err, closeErr)
 	}
 	e.mu.Lock()
 	e.jobs[j.ID] = j
 	e.mu.Unlock()
+	select {
+	case <-e.done:
+		_ = j.stop("killed", true)
+	default:
+	}
 	slog.Info("[任务已启动]", "instance", e.id, "job", j.ID, "client", req.ClientID, "request", req.RequestID, "cwd", p.Cwd, "command_bytes", len(p.Command), "timeout_ms", p.TimeoutMS)
 	go func() {
+		if j.pg.waitRoot() {
+			// 根进程已退出，先终止仍持有输出管道的子进程，再排空输出。
+			j.mu.Lock()
+			cleanupErr := j.pg.terminate(true)
+			j.mu.Unlock()
+			if cleanupErr != nil {
+				slog.Error("[任务子进程回收失败]", "job", j.ID, "error", cleanupErr)
+			}
+		}
 		err := cmd.Wait()
 		j.mu.Lock()
+		closeErr := j.pg.close()
 		j.ended = time.Now()
 		j.exitCode = 0
 		if err != nil {
@@ -79,6 +108,9 @@ func (e *Engine) start(req protocol.Message, p commandParams) (*Job, error) {
 		close(j.done)
 		state, exitCode, duration := j.state, j.exitCode, j.ended.Sub(j.started).Round(time.Millisecond)
 		j.mu.Unlock()
+		if closeErr != nil {
+			slog.Error("[任务进程组释放失败]", "job", j.ID, "error", closeErr)
+		}
 		slog.Info("[任务结束]", "instance", e.id, "job", j.ID, "client", req.ClientID, "request", req.RequestID, "state", state, "exit_code", exitCode, "duration", duration)
 	}()
 	go e.publishJob(j)
@@ -102,7 +134,7 @@ func (j *Job) stop(reason string, force bool) error {
 	if j.state != "running" {
 		return nil
 	}
-	if err := signalProcess(j.cmd, force); err != nil {
+	if err := j.pg.terminate(force); err != nil {
 		slog.Error("[任务终止失败]", "job", j.ID, "reason", reason, "force", force, "error", err)
 		return err
 	}

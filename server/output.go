@@ -42,3 +42,21 @@ func (b *output) Read(offset int64) ([]byte, int64, int64) {
 	}
 	return append([]byte(nil), b.data[offset-b.base:]...), offset, end
 }
+
+// ReadLimit 从 offset 读取最多 limit 字节，避免复制整个尾部缓存。
+// 返回数据、实际起点、下一偏移和缓存末尾偏移。
+func (b *output) ReadLimit(offset int64, limit int) ([]byte, int64, int64, int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	end := b.base + int64(len(b.data))
+	if offset < b.base {
+		offset = b.base
+	}
+	if offset > end {
+		offset = end
+	}
+	start := int(offset - b.base)
+	stop := min(start+limit, len(b.data))
+	data := append([]byte(nil), b.data[start:stop]...)
+	return data, offset, offset + int64(len(data)), end
+}

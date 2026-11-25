@@ -7,6 +7,12 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	"remote-mcp/internal/protocol"
+)
+
+const (
+	sessionReadMaxBytes  = 64 * 1024
+	sessionReadMaxWaitMS = 30_000
 )
 
 type toolArguments struct {
@@ -26,6 +32,13 @@ type toolArguments struct {
 	Overwrite    bool   `json:"overwrite"`
 	ChunkSize    int64  `json:"chunk_size"`
 	Concurrency  int    `json:"concurrency"`
+
+	Args      []string `json:"args"`
+	Input     string   `json:"input"`
+	SessionID string   `json:"session_id"`
+	MaxBytes  int      `json:"max_bytes"`
+	WaitMS    int64    `json:"wait_ms"`
+	StripANSI bool     `json:"strip_ansi"`
 }
 
 type toolDefinition struct {
@@ -44,6 +57,11 @@ var toolDefinitions = []toolDefinition{
 	{"job_output", "Read stdout and stderr from the specified byte offsets. If only offset is provided, it is used for both streams; stream-specific offsets override it.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"job_id":{"type":"string","minLength":1},"offset":{"type":"integer","minimum":0},"stdout_offset":{"type":"integer","minimum":0},"stderr_offset":{"type":"integer","minimum":0}},"required":["instance_id","job_id"],"additionalProperties":false}`},
 	{"job_cancel", "Request graceful job termination. The server escalates to forced termination if the job does not exit.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"job_id":{"type":"string","minLength":1}},"required":["instance_id","job_id"],"additionalProperties":false}`},
 	{"job_kill", "Forcefully terminate the job process.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"job_id":{"type":"string","minLength":1}},"required":["instance_id","job_id"],"additionalProperties":false}`},
+	{"session_create", "Start a program with separate arguments in a remote 120x40 PTY. Use exec_run for one-off commands.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"command":{"type":"string","minLength":1},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"}},"required":["instance_id","command"],"additionalProperties":false}`},
+	{"session_write", "Write input to a remote PTY. Append \\n on Unix or \\r on Windows to submit a command.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"session_id":{"type":"string","minLength":1},"input":{"type":"string"}},"required":["instance_id","session_id","input"],"additionalProperties":false}`},
+	{"session_read", "Read PTY output incrementally by byte offset; resume at next_offset. wait_ms defaults to 0; use 500-2000 to wait. Enable strip_ansi only as needed.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"session_id":{"type":"string","minLength":1},"offset":{"type":"integer","minimum":0,"default":0},"max_bytes":{"type":"integer","minimum":0,"default":65536,"description":"0 uses the default; capped at 65536."},"wait_ms":{"type":"integer","minimum":0,"default":0,"description":"Capped at 30000."},"strip_ansi":{"type":"boolean","default":false}},"required":["instance_id","session_id"],"additionalProperties":false}`},
+	{"session_close", "Close a remote PTY session and attempt to terminate its process tree.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"session_id":{"type":"string","minLength":1}},"required":["instance_id","session_id"],"additionalProperties":false}`},
+	{"session_list", "List PTY sessions on the instance.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1}},"required":["instance_id"],"additionalProperties":false}`},
 	{"file_stat", "Get remote file metadata, optionally including its SHA-256 hash.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"path":{"type":"string","minLength":1},"sha256":{"type":"boolean"}},"required":["instance_id","path"],"additionalProperties":false}`},
 	{"file_list", "List the contents of a remote directory.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"path":{"type":"string","minLength":1}},"required":["instance_id","path"],"additionalProperties":false}`},
 	{"file_upload", "Upload a file in 5 MiB chunks with up to four concurrent transfers. Confirm the remote destination is trusted before uploading.", `{"type":"object","properties":{"instance_id":{"type":"string","minLength":1},"local_path":{"type":"string","minLength":1},"remote_path":{"type":"string","minLength":1},"transfer_id":{"type":"string"},"overwrite":{"type":"boolean"},"chunk_size":{"type":"integer","const":5242880,"default":5242880},"concurrency":{"type":"integer","const":4,"default":4}},"required":["instance_id","local_path","remote_path"],"additionalProperties":false}`},
@@ -54,7 +72,7 @@ var toolDefinitions = []toolDefinition{
 
 // NewMCPServer 注册项目提供的完整 MCP 工具集合。
 func NewMCPServer(bridge *Bridge) *mcpserver.MCPServer {
-	server := mcpserver.NewMCPServer("remote-mcp", "0.2.0",
+	server := mcpserver.NewMCPServer("remote-mcp", "0.3.0",
 		mcpserver.WithRecovery(),
 		mcpserver.WithInputSchemaValidation(),
 	)
@@ -64,6 +82,11 @@ func NewMCPServer(bridge *Bridge) *mcpserver.MCPServer {
 		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			result, err := runTool(ctx, bridge, name, request.GetArguments())
 			if err != nil {
+				if remoteErr, ok := err.(*protocol.Error); name == "session_write" && ok && len(remoteErr.Data) != 0 {
+					failure := mcp.NewToolResultStructuredOnly(remoteErr)
+					failure.IsError = true
+					return failure, nil
+				}
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			encoded, err := json.MarshalIndent(result, "", "  ")
@@ -118,6 +141,12 @@ func runTool(ctx context.Context, bridge *Bridge, name string, input map[string]
 		bridge.cancelTransfer(args.TransferID)
 		return bridge.Request(ctx, args.InstanceID, "transfer.cancel", map[string]any{"transfer_id": args.TransferID})
 	}
+	if name == "session_read" {
+		if args.MaxBytes <= 0 || args.MaxBytes > sessionReadMaxBytes {
+			args.MaxBytes = sessionReadMaxBytes
+		}
+		args.WaitMS = min(max(args.WaitMS, 0), sessionReadMaxWaitMS)
+	}
 	method, params, err := requestForTool(name, args)
 	if err != nil {
 		return nil, err
@@ -135,6 +164,26 @@ func requestForTool(name string, args toolArguments) (string, map[string]any, er
 		return "job.start", commandParams(args), nil
 	case "job_status", "job_cancel", "job_kill":
 		return "job." + map[string]string{"job_status": "status", "job_cancel": "cancel", "job_kill": "kill"}[name], map[string]any{"job_id": args.JobID}, nil
+	case "session_create":
+		params := map[string]any{"command": args.Command}
+		if args.Args != nil {
+			params["args"] = args.Args
+		}
+		if args.Cwd != "" {
+			params["cwd"] = args.Cwd
+		}
+		return "session.create", params, nil
+	case "session_write":
+		return "session.write", map[string]any{"session_id": args.SessionID, "input": args.Input}, nil
+	case "session_read":
+		return "session.read", map[string]any{
+			"session_id": args.SessionID, "offset": args.Offset, "max_bytes": args.MaxBytes,
+			"wait_ms": args.WaitMS, "strip_ansi": args.StripANSI,
+		}, nil
+	case "session_close":
+		return "session.close", map[string]any{"session_id": args.SessionID}, nil
+	case "session_list":
+		return "session.list", map[string]any{}, nil
 	case "file_stat":
 		return "file.stat", map[string]any{"path": args.Path, "sha256": args.SHA256}, nil
 	case "file_list":
