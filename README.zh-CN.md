@@ -88,7 +88,33 @@ MCP Host 的 stdio 配置：
 }
 ```
 
-`instance_list` 只返回实例 ID 和在线状态，不包含指南正文；AI 需要使用某实例时再调用 `instance_get` 读取指南，避免无关指南占用上下文。
+## 工具列表
+
+除 `instance_list` 外，所有工具都需要 `instance_id`。返回结果均为 JSON。
+
+| 分组 | 工具 | 用途 |
+| --- | --- | --- |
+| 实例 | `instance_list` | 列出实例 ID 和在线状态，不包含指南内容。 |
+| 实例 | `instance_get` | 按需读取实例使用指南；调用远程命令前先确认目标系统、shell 和工作目录。 |
+| 命令 | `exec_run` | 前台执行单条命令，返回 stdout、stderr、状态和退出码；默认超时 30 秒。 |
+| 作业 | `job_start` | 启动后台命令并返回 `job_id`。 |
+| 作业 | `job_status` | 查询作业状态、退出码、开始时间和耗时。 |
+| 作业 | `job_output` | 按字节偏移增量读取 stdout 和 stderr，续读使用 `stdout_next_offset` 和 `stderr_next_offset`。 |
+| 作业 | `job_cancel` | 请求优雅终止；作业未退出时由 server 升级为强制终止。 |
+| 作业 | `job_kill` | 强制终止作业进程。 |
+| 会话 | `session_create` | 在 120×40 PTY 中启动 `command`，可选 `args` 和 `cwd`，返回 `session_id`。 |
+| 会话 | `session_write` | 向会话写入 `input`；提交命令时 Unix 追加 `\n`，Windows 追加 `\r`。 |
+| 会话 | `session_read` | 按字节偏移读取 PTY 输出，可选 `wait_ms` 和 `strip_ansi`。 |
+| 会话 | `session_close` | 关闭会话并尽力清理其进程。 |
+| 会话 | `session_list` | 列出实例上运行中及仍在保留期内的会话。 |
+| 文件 | `file_stat` | 获取远端文件元数据，可选计算 SHA-256。 |
+| 文件 | `file_list` | 列出远端目录内容。 |
+| 文件 | `file_upload` | 将本地文件上传到远端路径。 |
+| 文件 | `file_download` | 将远端文件下载到本地路径。 |
+| 传输 | `transfer_status` | 查询传输状态和已完成分块。 |
+| 传输 | `transfer_cancel` | 取消传输并清理未提交的临时数据。 |
+
+`instance_list` 只返回实例 ID 和在线状态，不包含指南正文；AI 需要使用某实例时再调用 `instance_get` 读取指南，避免无关指南占用上下文。作业与会话的细节见后续小节。
 
 ## 远程命令与脚本执行
 

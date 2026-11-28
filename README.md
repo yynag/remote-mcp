@@ -93,7 +93,33 @@ MCP Host stdio configuration:
 }
 ```
 
-`instance_list` returns only instance IDs and online status, not guide content. When the AI needs to use an instance, it calls `instance_get` to read the guide, preventing unrelated guides from consuming context.
+## Tools
+
+All tools require `instance_id` except `instance_list`. Results are JSON.
+
+| Group | Tool | Purpose |
+| --- | --- | --- |
+| Instance | `instance_list` | List instance IDs with online status. Guide content is not included. |
+| Instance | `instance_get` | Read an instance's usage guide on demand; call it before remote commands to confirm the target OS, shell, and workspace. |
+| Command | `exec_run` | Run one command in the foreground and return stdout, stderr, state, and exit code; default timeout 30 seconds. |
+| Job | `job_start` | Start a background command and return a `job_id`. |
+| Job | `job_status` | Get job state, exit code, start time, and duration. |
+| Job | `job_output` | Read stdout and stderr from byte offsets; continue from `stdout_next_offset` and `stderr_next_offset`. |
+| Job | `job_cancel` | Request graceful termination; the server escalates to forced termination if the job does not exit. |
+| Job | `job_kill` | Forcefully terminate the job process. |
+| Session | `session_create` | Start `command` in a 120×40 PTY; optional `args` and `cwd`; returns `session_id`. |
+| Session | `session_write` | Write `input` to a session; Unix appends `\n` and Windows appends `\r`. |
+| Session | `session_read` | Read PTY output by byte offset, with optional `wait_ms` and `strip_ansi`. |
+| Session | `session_close` | Close a session and make a best-effort cleanup of its processes. |
+| Session | `session_list` | List running and retained sessions on the instance. |
+| File | `file_stat` | Get remote file metadata, optionally including SHA-256. |
+| File | `file_list` | List a remote directory. |
+| File | `file_upload` | Upload a local file to a remote path. |
+| File | `file_download` | Download a remote file to a local path. |
+| Transfer | `transfer_status` | Get transfer state and completed chunks. |
+| Transfer | `transfer_cancel` | Cancel a transfer and clean up uncommitted temporary data. |
+
+`instance_list` returns only instance IDs and online status, not guide content. When the AI needs to use an instance, it calls `instance_get` to read the guide, preventing unrelated guides from consuming context. Jobs and sessions are further described in the sections below.
 
 ## Remote Command and Script Execution
 
